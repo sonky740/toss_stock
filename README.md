@@ -32,11 +32,11 @@
    defaults read com.ameba.SwiftBar PluginDirectory
    ```
 
-2. `tossstock.10s.sh`를 그 폴더에 두고 실행 권한을 준다 (이 저장소가 이미 플러그인 폴더라면 복사는 생략).
+2. `SwiftBar/tossstock.10s.sh`를 그 폴더에 두고 실행 권한을 준다 (이 저장소의 `SwiftBar/` 폴더 자체를 플러그인 폴더로 지정했다면 복사는 생략).
 
    ```bash
    DIR="$(defaults read com.ameba.SwiftBar PluginDirectory)"
-   cp tossstock.10s.sh "$DIR/"   # 이미 같은 폴더면 생략
+   cp SwiftBar/tossstock.10s.sh "$DIR/"   # SwiftBar/ 를 플러그인 폴더로 지정했다면 생략
    chmod +x "$DIR/tossstock.10s.sh"
    ```
 
@@ -112,10 +112,11 @@ tossctl auth status
 ## 파일 구조
 
 ```
-SwiftBar/
-├── tossstock.10s.sh   # 플러그인 본체
-├── SPEC.md            # 동작 명세 (source of truth)
-└── README.md          # 이 문서
+.
+├── README.md              # 이 문서
+├── SPEC.md                # 동작 명세 (source of truth)
+└── SwiftBar/
+    └── tossstock.10s.sh   # 플러그인 본체
 
 ~/.config/tossstock/symbols.tsv   # 관심종목 설정 (런타임 생성)
 /tmp/tossstock_rotate.idx         # 메뉴바 회전 인덱스 (런타임)
