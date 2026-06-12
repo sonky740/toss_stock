@@ -185,12 +185,25 @@ done < "$SYMBOLS_FILE"
 
 watch_titles=()  # 보유종목이 없을 때 메뉴바 폴백용
 watch_lines=()   # 드롭다운 관심종목 리스트
+NAMES=()         # SYMBOLS와 인덱스 정렬된 실제 종목명 (삭제 메뉴용; 조회 실패/이름 없음이면 미설정)
+
+# 관심종목 시세를 batch 한 번으로 일괄 조회 (새로고침마다 N회 → 1회).
+# batch는 가격 없는 코드가 하나라도 끼면 전체가 실패하므로(상폐 등),
+# batch 결과에 없는 코드만 개별 quote get으로 폴백해 해당 줄만 격리 처리한다.
+WATCH_BATCH="[]"
+if [ "${#SYMBOLS[@]}" -gt 0 ]; then
+  watch_csv=$(printf '%s,' "${SYMBOLS[@]}"); watch_csv="${watch_csv%,}"
+  WATCH_BATCH=$(tossctl quote batch "$watch_csv" --output json 2>/dev/null | jq -s 'add // []')
+  [ -z "$WATCH_BATCH" ] && WATCH_BATCH="[]"
+fi
 
 for i in "${!SYMBOLS[@]}"; do
   sym="${SYMBOLS[$i]}"
   short="${ALIASES[$i]}"
 
-  data=$(tossctl quote get "$sym" --output json 2>/dev/null | jq -s '.[0]')
+  # batch 결과에서 먼저 찾고, 없으면(=batch 실패/누락) 개별 조회로 폴백
+  data=$(echo "$WATCH_BATCH" | jq -c --arg s "$sym" 'map(select(.symbol==$s)) | .[0] // empty')
+  [ -z "$data" ] && data=$(tossctl quote get "$sym" --output json 2>/dev/null | jq -s '.[0]')
 
   if [ -z "$data" ] || [ "$data" = "null" ]; then
     watch_lines+=("$sym  조회실패 (코드/인증 확인) | color=gray")
@@ -199,6 +212,7 @@ for i in "${!SYMBOLS[@]}"; do
   fi
 
   full=$(echo "$data" | jq -r '.name // .symbol')   # 전체 종목명 (드롭다운용)
+  [ "$full" != "$sym" ] && NAMES[$i]="$full"        # 실제 종목명만 보관 (코드 폴백은 제외)
   [ -z "$short" ] && short="$full"                  # 별칭 없으면 종목명 사용
   last=$(echo "$data" | jq -r '.last')
   ccy=$(echo "$data" | jq -r '.currency // "KRW"')
@@ -273,8 +287,18 @@ if [ "${#SYMBOLS[@]}" -gt 0 ]; then
   echo "➖ 종목 삭제"
   for i in "${!SYMBOLS[@]}"; do
     sym="${SYMBOLS[$i]}"
-    label="${ALIASES[$i]}"
-    [ -z "$label" ] && label="$sym"
+    aliasname="${ALIASES[$i]}"
+    name="${NAMES[$i]}"
+    # 표시명: 종목명 우선, 별칭이 있으면 병기. 종목명 조회 실패 시 별칭 → 코드 폴백
+    if [ -n "$name" ] && [ -n "$aliasname" ]; then
+      label="${name} · ${aliasname}"
+    elif [ -n "$name" ]; then
+      label="$name"
+    elif [ -n "$aliasname" ]; then
+      label="$aliasname"
+    else
+      label="$sym"
+    fi
     echo "-- ❌ ${label} (${sym}) | bash='$SELF' param1='remove' param2='$sym' terminal=false refresh=true"
   done
 fi

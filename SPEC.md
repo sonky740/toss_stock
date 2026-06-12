@@ -54,8 +54,8 @@ SwiftBar 플러그인. `tossctl`로 Toss 증권 보유종목 수익률과 관심
 | 명령 | 용도 | 소비하는 필드 |
 |---|---|---|
 | `tossctl portfolio positions --output json` | 보유종목 | `.symbol`, `.market_type`, `.name`, `.current_price`, `.profit_rate`, `.unrealized_pnl` |
-| `tossctl quote batch <a,b,c> --output json` | 미국주식 현재가(USD) 일괄 | `.symbol`, `.last` |
-| `tossctl quote get <sym> --output json` | 관심종목 시세 | `.name`, `.symbol`, `.last`, `.currency`, `.change_rate`, `.change` |
+| `tossctl quote batch <a,b,c> --output json` | ① 보유 미국주식 현재가(USD) 일괄 ② 관심종목 시세 일괄 | `.symbol`, `.last`(보유) / `.name`, `.symbol`, `.last`, `.currency`, `.change_rate`, `.change`(관심) |
+| `tossctl quote get <sym> --output json` | 관심종목 시세 개별 (batch 누락 코드 폴백용) | `.name`, `.symbol`, `.last`, `.currency`, `.change_rate`, `.change` |
 | `tossctl auth status` | 인증 상태 확인(터미널) | — |
 | `jq` | JSON 파싱 | — |
 
@@ -98,7 +98,8 @@ SwiftBar 플러그인. `tossctl`로 Toss 증권 보유종목 수익률과 관심
 
 각 관심종목 한 줄: `종목명  현재가  ▲등락률% (▲등락액)`.
 
-- 종목명은 `quote get`의 `.name` (없으면 코드).
+- 시세는 `quote batch`로 전체 관심종목을 1회 일괄 조회한다. batch는 가격 없는 코드가 하나라도 끼면 전체가 실패하므로(상폐 등), batch 결과에 없는 코드만 `quote get`으로 개별 폴백해 해당 줄만 격리한다.
+- 종목명은 `.name` (없으면 코드).
 - 통화 인식: `.currency=="USD"` → $ 표시, 그 외 → ₩.
 - 방향: `.change_rate > 0` → ▲ green, `< 0` → ▼ red, `= 0` → ▬ gray.
 - 등락률·등락액은 절댓값으로 표시하고 방향은 화살표로 나타낸다.
@@ -108,7 +109,8 @@ SwiftBar 플러그인. `tossctl`로 Toss 증권 보유종목 수익률과 관심
 ### 3.4 관심종목 관리
 
 - `➕ 종목 추가…` 클릭 → `add` 재호출 → osascript 다이얼로그 2개(코드 입력 → 별칭 입력). 코드가 비면 취소. 이미 등록된 코드면 알림 후 종료.
-- `➖ 종목 삭제` 하위에 등록 종목별 `❌ 별칭 (코드)` 항목 → 클릭 시 `remove <code>` 재호출로 해당 행 삭제.
+- `➖ 종목 삭제` 하위에 등록 종목별 `❌ 종목명 · 별칭 (코드)` 항목 → 클릭 시 `remove <code>` 재호출로 해당 행 삭제.
+  - 표시명은 `quote get`의 실제 종목명을 우선하고, 별칭이 있으면 ` · 별칭`으로 병기한다. 종목명 조회 실패 시 별칭 → 코드 순으로 폴백한다. 코드는 항상 괄호로 병기한다.
 - 두 액션 모두 `terminal=false refresh=true`로 동작 후 메뉴를 즉시 갱신한다.
 
 ### 3.5 하단 고정 항목
