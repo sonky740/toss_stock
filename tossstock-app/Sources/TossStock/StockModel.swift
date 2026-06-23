@@ -32,6 +32,7 @@ final class StockModel {
 
     private let service: TossService
     private var pollTask: Task<Void, Never>?
+    private var authDismissTask: Task<Void, Never>?
 
     init(service: TossService = TossService(api: TossAPI(tokens: TokenStore()))) {
         self.service = service
@@ -68,6 +69,7 @@ final class StockModel {
 
     /// 앱 내 인증 점검(토큰 발급 + accounts 조회). 429면 캐시 폴백.
     func checkAuth() {
+        authDismissTask?.cancel()   // 직전 점검의 자동 숨김 타이머 취소
         if !TokenStore.hasCredentials() { needsCredentials = true; authCheck = .failed; return }
         needsCredentials = false
         if pollTask == nil { start() }
@@ -82,6 +84,17 @@ final class StockModel {
             } catch {
                 authCheck = .failed
             }
+            scheduleAuthDismiss()
+        }
+    }
+
+    /// 인증 점검 결과는 상시 노출하지 않는다 — 누른 뒤 잠깐만 보여주고 자동으로 숨긴다.
+    private func scheduleAuthDismiss() {
+        authDismissTask?.cancel()
+        authDismissTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            self?.authCheck = .none
         }
     }
 
