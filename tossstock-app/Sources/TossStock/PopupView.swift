@@ -401,7 +401,8 @@ struct PopupView: View {
     }
 
     private func expiryText(_ d: Date?) -> String {
-        d?.formatted(date: .omitted, time: .shortened) ?? "?"
+        // 토큰은 ~24h 유효 → 만료가 익일인 경우가 많아 시간만 표기하면 당일로 오해. 월·일 병기.
+        d?.formatted(.dateTime.month().day().hour().minute()) ?? "?"
     }
 }
 
