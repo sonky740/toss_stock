@@ -4,3 +4,7 @@
 auth.env
 *.env
 token.json
+
+# SwiftPM / 네이티브 앱 빌드 산출물
+tossstock-app/.build/
+tossstock-app/build/

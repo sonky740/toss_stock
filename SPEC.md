@@ -1,8 +1,13 @@
-# SPEC — tossstock.10s.sh
+# SPEC — tossstock (SwiftBar 플러그인 + 네이티브 앱)
 
-SwiftBar 플러그인. **토스증권 Open API**로 보유종목 수익률과 관심종목 시세를 macOS 메뉴바에 표시한다.
+**토스증권 Open API**로 보유종목 수익률과 관심종목 시세를 macOS 메뉴바에 표시한다. 두 가지 surface가 있다:
+
+1. **SwiftBar 플러그인** (`SwiftBar/tossstock.10s.sh`) — §1~§4.
+2. **네이티브 앱** (`tossstock-app/`) — §5. 펼친 채 실시간 갱신. 결정 #2에 따라 안정화 후 플러그인을 대체한다(현재 병행).
 
 > 데이터 소스는 **토스증권 Open API**(`https://openapi.tossinvest.com`, OAuth2 Client Credentials)다.
+>
+> **§2.4(인증)·§2.5(엔드포인트)·§2.6(설정 파일)은 두 surface가 그대로 공유**한다. §3.1~§3.7의 표시 의미(회전 우선순위·통화·색·등락·포맷)도 공유하며 렌더 방식만 다르다. 네이티브 앱이 플러그인과 **다른** 점만 §5에 적는다.
 
 ---
 
@@ -173,3 +178,74 @@ SwiftBar 플러그인. **토스증권 Open API**로 보유종목 수익률과 �
 - **관심종목 등락 = candles 의존**: 등락 계산에 종목당 일봉 1회 호출이 필요하다. 관심종목 N개면 새로고침마다 candles N회(+0.25초 간격 throttle)가 발생해 렌더에 약 `N×0.25초`가 더 든다. `MARKET_DATA_CHART`(초당 5회) 제한 때문이다.
 - **회전 상태 전역성**: `/tmp/tossstock_rotate.idx`는 단일 파일이라 동일 플러그인 다중 인스턴스를 가정하지 않는다.
 - **새로고침 주기**: 파일명(`10s`)에 종속. 코드로 제어하지 않는다.
+
+---
+
+## 5. 네이티브 앱 (`tossstock-app`) — 펼친 채 실시간 갱신
+
+플러그인과 **동일한 데이터·API·설정 파일**(§2.4 인증, §2.5 엔드포인트, §2.6 설정 파일)을 쓰되, 렌더를 SwiftBar(NSMenu)가 아닌 **SwiftUI 메뉴바 앱**으로 한다.
+
+### 5.1 존재 이유
+
+SwiftBar 드롭다운(NSMenu)은 펼치면 런루프가 `.eventTracking` 모드로 전환돼 타이머·redraw가 멈춘다 → 펼친 채로는 시세가 갱신되지 않는다. `MenuBarExtra` + `.menuBarExtraStyle(.window)`는 NSMenu가 아닌 **플로팅 윈도우**라 메인 런루프 default 모드를 유지 → **펼친 채로도 갱신**된다.
+
+### 5.2 아키텍처
+
+- **UI**: SwiftUI `MenuBarExtra(.window)`. `LSUIElement=true` + `setActivationPolicy(.accessory)`로 Dock 미표시. 모노크롬 회전 타이틀, 컬러는 드롭다운에만.
+- **폴링**: `Task { while: Task.sleep(10초) }`. RunLoop Timer 금지(`.eventTracking` 진입 시 멈춤 — SwiftBar 동결 재현). holdings·watch는 rate 그룹이 달라 `async let`로 off-actor 병렬.
+- **레이어**: `PopupView`(뷰) → `StockModel`(@MainActor @Observable, 폴링·회전 소유) → `TossService`/`TossAPI`(service) → `URLSession`(I/O). 토큰은 `TossAuth`(actor `TokenStore`)에 위임.
+- **빌드**: SwiftPM `executableTarget`(외부 의존성 0, Swift 6 모드). `Packaging/build.sh` → `.app` 조립 + ad-hoc codesign. `--dump` 인자로 GUI 없이 데이터 레이어 헤드리스 검증.
+- **App Sandbox OFF**: 토큰 저장 a안(§5.5)이 `~/.config/tossstock` 접근을 요구 → 미샌드박스(entitlements 파일 없음). 미샌드박스 앱은 `network.client` 없이 네트워크 가능.
+
+### 5.3 화면 동작 (플러그인과 다른 점만)
+
+§3의 의미는 모두 동일하되 렌더가 다르다. 다른 점:
+
+- **회전 인덱스**: `/tmp` 파일이 아닌 **인메모리**(영속 앱). 매 폴링 전진.
+- **섹션 실패 표시**(결정 #4): holdings 통째 실패 → "보유종목 조회 실패 (인증 확인)" (stale 유지 안 함, 셸과 동일). 관심종목 개별 누락은 §3.3대로 줄단위 lookupFailed.
+- **관심종목 관리**: osascript 다이얼로그가 아닌 **인라인** — 패널 안 TextField(코드/별칭) + 추가 버튼, 행별 X 삭제. 헤더 줄 전체 클릭으로 펼침/접힘.
+- **하단**: 새로고침 / 인증 점검(§5.6) / 마지막 갱신 시각 / 종료.
+- **레이아웃 주의**: `ScrollView`는 고유 높이가 0이라 self-sizing 윈도우(`MenuBarExtra .window`)에서 붕괴한다 → 콘텐츠 실측 높이로 ScrollView 높이를 고정(최대 520, 초과 시 스크롤).
+
+### 5.4 데이터 디코딩 (네이티브 고유)
+
+- 모든 금액/수량 JSON 필드는 **문자열** → 합성 Decodable이 `decode(Double.self)`로 깨진다. 금액 보유 DTO마다 수동 `init(from:)` + `decimal()` 헬퍼(문자열·숫자·null·키누락·빈문자열 전부 nil/값, 크래시 0).
+- `currency`는 **관대한 enum**(unknown 값 흡수). 중첩 디코드라 throw하면 holdings 통째 블랭크가 되기 때문.
+- candles: `candles[0]`=당일, `candles[1]`=전일종가. `count < 2` 가드(신규상장 인덱스 크래시 방지).
+
+### 5.5 토큰 저장 (a안 — 플러그인과 공유)
+
+- `~/.config/tossstock/token.json`을 플러그인과 **공유**(동일 스키마, atomic write + chmod 600).
+- `actor TokenStore`: 캐시 재사용 → 만료 5분 전 선제 재발급 → 동시 만료 감지 시 **재발급 1회**(in-flight 공유 — `refreshTask`를 `await` 이전에 동기 세팅) → 401 시 단일 재발급.
+- **이중 클라이언트 thrash 차단(핵심)**: 401 시 곧장 재발급하지 않고 `token.json`을 **디스크에서 재확인** — 플러그인이 이미 새 토큰을 써뒀으면 채택, 아니면만 재발급(`reloadOrMint`). 파일 공유만으로는 부족하다(앱은 메모리 캐시라 stale 가능) — 이 재확인이 a안의 thrash 해소를 실제로 성립시킨다.
+
+### 5.6 인증 점검 (429 캐시 폴백)
+
+- "인증 점검" → `GET /api/v1/accounts`로 계좌번호·seq 확인 + 토큰 만료시각 표시.
+- `/accounts`는 rate limit이 **분당 1회 수준**(`X-RateLimit-Limit: 1` 실측)이라 직전에 호출됐으면 429가 날 수 있다 → 실패로 보지 않고 **캐시된 seq·만료시각**으로 폴백 표시.
+- 폴링은 `accountSeq`를 토큰과 함께 캐시해 `/accounts`를 호출하지 않으므로 영향 없다.
+
+### 5.7 코이그지스턴스 비용 (병행 시)
+
+- 플러그인과 앱이 **같은 `client_id`의 rate-limit 버킷을 공유**한다. 둘 다 10초마다 candles N회를 쏘면 `MARKET_DATA_CHART`(초당 5회) 한도를 초과해 429 → 해당 행 "등락 데이터 없음"으로 degrade(크래시 아님).
+- 토큰 thrash는 §5.5로 차단되지만 rate-limit 공유 비용은 남는다. 플러그인 제거(결정 #2) 후 단일 클라이언트가 되면 소멸한다.
+
+### 5.8 파일 구성
+
+```
+tossstock-app/
+├── Package.swift                  SwiftPM executableTarget, 의존성 0, Swift 6 모드
+├── Sources/TossStock/
+│   ├── TossStockApp.swift         @main 진입(--dump 분기) + MenuBarExtra(.window) Scene + AppDelegate
+│   ├── StockModel.swift           @MainActor @Observable. 폴링 루프·회전·인증상태
+│   ├── PopupView.swift            드롭다운(보유/관심/관리/하단/설정안내)
+│   ├── TossService.swift          도메인 메서드(positionRows/watchRows/authStatus) + Dump
+│   ├── TossAPI.swift              URLSession 요청계층(Bearer·계좌헤더·401/429 재시도) + TossHTTP
+│   ├── TossAuth.swift             actor TokenStore(토큰 캐시·in-flight·디스크 재확인) + ConfigPaths
+│   ├── Models.swift               DTO(수동 init + decimal) + 표시 Row 타입
+│   ├── Watchlist.swift            symbols.tsv 읽기/시드/추가/삭제 + 정제
+│   └── Format.swift               ₩/$/원/달러·등락·화살표 포맷(§3.7 패리티)
+└── Packaging/
+    ├── Info.plist                 LSUIElement, 번들 식별자
+    └── build.sh                   swift build → .app 조립 → ad-hoc codesign
+```

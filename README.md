@@ -9,6 +9,8 @@
 
 자세한 동작 명세는 [SPEC.md](./SPEC.md) 참고.
 
+> **네이티브 앱(`tossstock-app/`)도 있다** — 같은 데이터를 **펼친 채 실시간 갱신**되는 SwiftUI 메뉴바 앱. SwiftBar 드롭다운은 펼치면 멈추지만(NSMenu 런루프 제약), 네이티브 앱은 펼친 채로도 10초마다 갱신된다. 빌드·실행은 아래 「네이티브 앱」 절과 SPEC.md §5 참고. 안정화되면 플러그인을 대체할 예정(현재 병행).
+
 ---
 
 ## 요구 사항
@@ -111,6 +113,36 @@
 
 ---
 
+## 네이티브 앱 (tossstock-app)
+
+펼친 채 실시간 갱신되는 SwiftUI 메뉴바 앱. 플러그인과 **같은 설정 파일**(`auth.env`/`token.json`/`symbols.tsv`)을 공유하므로 자격증명을 새로 만들 필요가 없다.
+
+### 빌드 · 실행
+
+```bash
+cd tossstock-app
+./Packaging/build.sh           # swift build → build/TossStock.app (ad-hoc 서명)
+open build/TossStock.app       # 메뉴바에 등록
+```
+
+> Xcode 불필요(SwiftPM, 외부 의존성 0). macOS 14+ / Swift 6 툴체인.
+
+### 플러그인과의 차이
+
+| | 플러그인 | 네이티브 앱 |
+|---|---|---|
+| 펼친 채 갱신 | ✗ (NSMenu 동결) | ✓ (MenuBarExtra `.window`) |
+| 관심종목 관리 | osascript 다이얼로그 | 패널 인라인 (TextField + X) |
+| 새로고침 주기 | 파일명(`10s`) | Task 폴링 10초 |
+| 회전 인덱스 | `/tmp` 파일 | 인메모리 |
+| 인증 점검 | 터미널 출력 | 패널 내 결과 표시 |
+
+### 병행 사용 주의
+
+플러그인과 앱은 **같은 `client_id`**를 쓴다. 토큰은 `token.json` 공유 + 디스크 재확인으로 thrash를 막지만(SPEC §5.5), **rate-limit 버킷은 공유**되므로 둘 다 켜두면 candles 호출이 한도를 넘어 일부 관심행이 일시적으로 "등락 데이터 없음"으로 표시될 수 있다(크래시 아님, SPEC §5.7). 앱이 안정화되면 플러그인 제거를 권장한다.
+
+---
+
 ## 문제 해결
 
 | 증상 | 원인 / 조치 |
@@ -130,12 +162,16 @@
 ```
 .
 ├── README.md              # 이 문서
-├── SPEC.md                # 동작 명세 (source of truth)
-└── SwiftBar/
-    └── tossstock.10s.sh   # 플러그인 본체
+├── SPEC.md                # 동작 명세 (source of truth) — 플러그인 §1~4, 네이티브 앱 §5
+├── SwiftBar/
+│   └── tossstock.10s.sh   # 플러그인 본체
+└── tossstock-app/         # 네이티브 메뉴바 앱 (SwiftPM) — SPEC §5
+    ├── Package.swift
+    ├── Sources/TossStock/*.swift
+    └── Packaging/{Info.plist, build.sh}
 
-~/.config/tossstock/auth.env      # client_id / client_secret (비밀, chmod 600)
-~/.config/tossstock/token.json    # access token 캐시 (런타임 생성)
-~/.config/tossstock/symbols.tsv   # 관심종목 설정 (런타임 생성)
-/tmp/tossstock_rotate.idx         # 메뉴바 회전 인덱스 (런타임)
+~/.config/tossstock/auth.env      # client_id / client_secret (비밀, chmod 600) — 두 surface 공유
+~/.config/tossstock/token.json    # access token 캐시 (런타임 생성) — 두 surface 공유
+~/.config/tossstock/symbols.tsv   # 관심종목 설정 (런타임 생성) — 두 surface 공유
+/tmp/tossstock_rotate.idx         # 플러그인 회전 인덱스 (네이티브 앱은 인메모리)
 ```
