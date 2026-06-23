@@ -1,1 +1,6 @@
 .DS_Store
+
+# 토스 Open API 자격증명·토큰 — 실수로 레포에 복사돼도 커밋되지 않도록 방어
+auth.env
+*.env
+token.json
