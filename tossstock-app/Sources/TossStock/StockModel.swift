@@ -110,10 +110,40 @@ final class StockModel {
             do { return .loaded(try await svc.watchRows(syms)) } catch { return .failed }
         }()
         let (hr, wr) = await (h, w)
-        holdings = hr
-        watch = wr
+        holdings = applyHoldingsOrder(hr)   // 매 갱신마다 저장된 사용자 순서 재적용
+        watch = wr                          // 관심종목은 watchSymbols(=symbols.tsv) 순서로 이미 도착
         lastUpdated = Date()
         advanceRotation()
+    }
+
+    private func applyHoldingsOrder(_ state: LoadState<PositionRow>) -> LoadState<PositionRow> {
+        guard case .loaded(let rows) = state else { return state }
+        return .loaded(HoldingsOrder.sorted(rows, by: \.id))
+    }
+
+    // ── 드래그 재배치 (네트워크 없음: 인메모리 재정렬 + 즉시 영속화) ──
+
+    /// 관심종목 from → to 인덱스로 이동(to = 이동 후 최종 위치). watchSymbols·로드된 행 재정렬 + symbols.tsv 저장.
+    func moveWatch(from: Int, to: Int) {
+        guard from != to, watchSymbols.indices.contains(from), to >= 0, to < watchSymbols.count else { return }
+        let moved = watchSymbols.remove(at: from)
+        watchSymbols.insert(moved, at: to)
+        Watchlist.save(watchSymbols)
+        if case .loaded(var rows) = watch {     // 로드된 행도 같은 순서로 즉시 반영(다음 폴링까지 안 기다림)
+            let rank = Dictionary(watchSymbols.enumerated().map { ($1.code, $0) }, uniquingKeysWith: { a, _ in a })
+            rows.sort { (rank[$0.id] ?? .max) < (rank[$1.id] ?? .max) }
+            watch = .loaded(rows)
+        }
+    }
+
+    /// 보유종목 from → to 인덱스로 이동(to = 이동 후 최종 위치). 로드된 행 재정렬 + holdings_order.txt 저장.
+    func moveHolding(from: Int, to: Int) {
+        guard from != to, case .loaded(var rows) = holdings,
+              rows.indices.contains(from), to >= 0, to < rows.count else { return }
+        let moved = rows.remove(at: from)
+        rows.insert(moved, at: to)
+        holdings = .loaded(rows)
+        HoldingsOrder.write(rows.map(\.id))
     }
 
     // ── 회전 타이틀 (보유 우선 → 관심 폴백 → 종목 없음) ──

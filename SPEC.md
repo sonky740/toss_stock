@@ -50,8 +50,12 @@
 
 - 관심종목: `~/.config/tossstock/symbols.tsv`
   - 형식: 한 줄당 `종목코드<TAB>별칭`. 별칭은 비어 있을 수 있다. `#`로 시작하는 줄은 주석.
+  - **줄 순서 = 관심종목 표시 순서**. 드래그 재배치(§3.3)가 이 줄 순서를 다시 쓴다.
   - 최초 실행 시 자동 시드: `0190C0\t현피AI`, `0167A0\tSOL탑`.
   - 입력 정제: 코드는 `영숫자·.·-`만(대문자화), 별칭은 탭·개행·파이프 제거 후 트림.
+- 보유종목 순서: `~/.config/tossstock/holdings_order.txt`
+  - 형식: 한 줄당 종목 심볼. 드래그 재배치(§3.2)가 현재 표시 순서를 통째로 저장한다.
+  - `/holdings` 응답은 매 갱신마다 이 순서로 정렬된다. 저장에 없는(새로 매수한) 종목은 뒤에 API 순서로 붙고, 매도해 사라진 종목은 무시된다(다음 재배치 시 자연 정리).
   - **심볼 형식**: 토스 Open API 표준 코드. KR 주식은 6자리 숫자(`005930`), 한국 ETF/ETN은 영문 섞인 코드(`0190C0`), 미국은 티커(`AAPL`)·ETF(`SOXX`).
 - 자격증명: `~/.config/tossstock/auth.env` (레포 밖, `chmod 600`)
   - `TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET`. 토스증권 WTS → 설정 → Open API 에서 발급. **절대 커밋 금지.**
@@ -83,6 +87,8 @@
 - 조회 실패(인증/오류) → `보유종목 조회 실패 (인증 확인)` (회색). stale 유지 안 함 — 섹션 통째 실패 시 해당 표시(결정 #4).
 - 보유종목 0건(`items` 빈 배열) → `보유종목 없음` (회색).
 
+- **드래그 재배치**: 행을 눌러 위아래로 끌어 놓으면 순서가 바뀌고 `holdings_order.txt`에 즉시 저장된다(§2.3). 놓는 순간 1회만(commit-on-end) 인메모리 행을 재정렬·영속화하므로 네트워크 재요청·10초 폴링과 충돌하지 않는다. 메뉴바 `.window`는 비활성 창이라 AppKit `NSDraggingSession`(SwiftUI `.draggable`)이 시작되지 않아 **수동 `DragGesture`(+`highPriorityGesture`)**로 구현한다 — 버튼 탭과 동일한 이벤트 스트림. macOS는 클릭-드래그로 스크롤하지 않아(휠/투핑거 사용) 스크롤과 충돌하지 않는다.
+
 ### 3.3 관심종목 섹션
 
 각 관심종목 한 줄: `종목명  현재가  ▲등락률% (▲등락액)`.
@@ -96,6 +102,7 @@
   - `/prices`에 코드가 없음(오타/상폐/인증) → `<코드>  조회실패 (코드/인증 확인)` (회색), 메뉴바 폴백 타이틀 `<코드> ⚠️`.
   - 전일종가 없음(신규상장 등) → `<종목명>  <현재가>  등락 데이터 없음` (회색).
   - 관심종목 0건 → `관심종목 없음` (회색).
+- **드래그 재배치**: 행을 약 0.25초 길게 눌러 들어올린 뒤 위아래로 끌어 놓으면 순서가 바뀌고 `symbols.tsv` 줄 순서가 다시 쓰인다(§2.3). 놓는 순간 1회만 `watchSymbols`와 로드된 행을 재정렬·저장하므로 재요청 없이 즉시 반영된다. 구현은 보유섹션과 동일한 수동 `DragGesture`(§3.2).
 
 ### 3.4 관심종목 관리 (인라인)
 
@@ -176,7 +183,8 @@ tossstock-app/
 │   ├── TossAPI.swift              URLSession 요청계층(Bearer·계좌헤더·401/429 재시도) + TossHTTP
 │   ├── TossAuth.swift             actor TokenStore(토큰 캐시·in-flight·디스크 재확인) + ConfigPaths
 │   ├── Models.swift               DTO(수동 init + decimal) + 표시 Row 타입
-│   ├── Watchlist.swift            symbols.tsv 읽기/시드/추가/삭제 + 정제
+│   ├── Watchlist.swift            symbols.tsv 읽기/시드/추가/삭제/순서저장 + 정제
+│   ├── HoldingsOrder.swift        holdings_order.txt 읽기/쓰기 + 저장 순서로 정렬(드래그 재배치)
 │   └── Format.swift               ₩/$/원/달러·등락·화살표 포맷(§3.7)
 └── Packaging/
     ├── Info.plist                 LSUIElement, 번들 식별자

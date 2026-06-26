@@ -60,6 +60,11 @@ enum Watchlist {
         write(read(paths).filter { $0.code != code }, paths)
     }
 
+    /// 외부에서 정한 순서로 통째 저장(드래그 재배치). add/remove와 동일한 write 경로.
+    static func save(_ list: [WatchSymbol], _ paths: ConfigPaths = .standard) {
+        write(list, paths)
+    }
+
     private static func seedIfMissing(_ paths: ConfigPaths) {
         guard !FileManager.default.fileExists(atPath: paths.symbolsTSV.path) else { return }
         try? FileManager.default.createDirectory(at: paths.dir, withIntermediateDirectories: true)

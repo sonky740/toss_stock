@@ -15,6 +15,7 @@ struct PopupView: View {
     @State private var newAlias = ""
     @State private var contentHeight: CGFloat = 0
     @State private var manageExpanded = false
+    @State private var drag: DragSession?          // 활성 드래그 재배치 세션(섹션 공유)
 
     var body: some View {
         Group {
@@ -51,6 +52,7 @@ struct PopupView: View {
                 )
             }
             .frame(height: min(max(contentHeight, 60), 520))
+            .scrollDisabled(drag != nil)  // 드래그 재배치 중 스크롤 충돌 방지
             hairline                      // 하단 풀폭 구분선
             footer
         }
@@ -65,7 +67,15 @@ struct PopupView: View {
         case .failed: placeholder("보유종목 조회 실패 (인증 확인)")
         case .loaded(let rows):
             if rows.isEmpty { placeholder("보유종목 없음") }
-            else { ForEach(rows) { positionRow($0) } }
+            else {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
+                    positionRow(r).modifier(Reorderable(
+                        section: .holding, index: i, count: rows.count, drag: $drag,
+                        commit: { from, to in
+                            withAnimation(.snappy(duration: 0.22)) { model.moveHolding(from: from, to: to) }
+                        }))
+                }
+            }
         }
     }
 
@@ -86,7 +96,15 @@ struct PopupView: View {
         case .failed: placeholder("관심종목 조회 실패")
         case .loaded(let rows):
             if rows.isEmpty { placeholder("관심종목 없음") }
-            else { ForEach(rows) { watchRow($0) } }
+            else {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
+                    watchRow(r).modifier(Reorderable(
+                        section: .watch, index: i, count: rows.count, drag: $drag,
+                        commit: { from, to in
+                            withAnimation(.snappy(duration: 0.22)) { model.moveWatch(from: from, to: to) }
+                        }))
+                }
+            }
         }
     }
 
@@ -419,6 +437,96 @@ private extension View {
     }
 }
 
+// ── 드래그 재배치 (수동 DragGesture) ──
+// 메뉴바 .window 는 비활성 창이라 AppKit NSDraggingSession(.draggable)이 시작되지 않는다.
+// 버튼 탭과 동일한 마우스 이벤트 스트림을 타는 SwiftUI DragGesture로 직접 구현한다.
+// macOS ScrollView는 휠/투핑거로 스크롤하지 클릭-드래그로 하지 않으므로 롱프레스 게이트가 불필요.
+// 누르고 바로 끌면 잡히도록 순수 DragGesture + highPriorityGesture(스크롤뷰 내부 인식기보다 우선).
+enum ReorderSection { case holding, watch }
+
+struct DragSession: Equatable {
+    let section: ReorderSection
+    let fromIndex: Int
+    let rowHeight: CGFloat
+    let count: Int
+    var translation: CGFloat
+
+    // 이동 후 최종 인덱스: 누적 이동량 / 행높이 반올림.
+    var targetIndex: Int {
+        guard rowHeight > 0 else { return fromIndex }
+        let delta = Int((translation / rowHeight).rounded())
+        return min(max(fromIndex + delta, 0), count - 1)
+    }
+}
+
+// 드롭 시 1회 커밋(commit-on-end) → 드래그 중 모델 변이 없음 → 10초 폴링과 충돌 없음.
+private struct Reorderable: ViewModifier {
+    let section: ReorderSection
+    let index: Int
+    let count: Int
+    @Binding var drag: DragSession?
+    let commit: (_ from: Int, _ to: Int) -> Void
+
+    @State private var rowHeight: CGFloat = 44
+
+    private var isDragging: Bool { drag?.section == section && drag?.fromIndex == index }
+    private var isTarget: Bool {
+        guard let d = drag, d.section == section, d.fromIndex != index else { return false }
+        return d.targetIndex == index
+    }
+
+    func body(content: Content) -> some View {
+        content
+            // 왼쪽 바 영역만 드래그 핸들(아래). 시각 피드백·offset은 행 전체에 적용되도록 핸들을
+            // content에 먼저 얹어 함께 변형시킨다.
+            .overlay(alignment: .leading) { dragHandle }
+            .background(GeometryReader { g in
+                Color.clear.onChange(of: g.size.height, initial: true) { _, h in rowHeight = h }
+            })
+            .background(
+                (isDragging ? Palette.dragLift : isTarget ? Palette.dropHi : Color.clear),
+                in: RoundedRectangle(cornerRadius: isDragging ? 8 : 0)
+            )
+            .scaleEffect(isDragging ? 1.03 : 1)
+            .shadow(color: .black.opacity(isDragging ? 0.45 : 0), radius: isDragging ? 8 : 0, y: isDragging ? 3 : 0)
+            .offset(y: isDragging ? (drag?.translation ?? 0) : 0)
+            .zIndex(isDragging ? 1 : 0)
+    }
+
+    // 왼쪽 액센트 바 주변(28px) 투명 스트립만 드래그 트리거. 텍스트 영역은 드래그 안 됨.
+    // 호버 시 펼친 손, 끄는 중 쥔 손 커서로 그랩 영역을 알린다.
+    private var dragHandle: some View {
+        Color.clear
+            .frame(width: 28)
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                guard drag == nil else { return }   // 드래그 중엔 쥔 손(아래 gesture) 유지
+                switch phase {
+                case .active: NSCursor.openHand.set()
+                case .ended:  NSCursor.arrow.set()
+                }
+            }
+            .highPriorityGesture(
+                // .global 필수: 행이 자기 translation 만큼 .offset 되므로, .local 이면 좌표공간이 함께
+                // 움직여 translationₙ = T − translationₙ₋₁ 진동(격렬한 흔들림)이 생긴다. 화면 고정 공간으로 차단.
+                DragGesture(minimumDistance: 5, coordinateSpace: .global)
+                    .onChanged { value in
+                        NSCursor.closedHand.set()
+                        drag = DragSession(section: section, fromIndex: index, rowHeight: rowHeight,
+                                           count: count, translation: value.translation.height)
+                    }
+                    .onEnded { _ in
+                        if let s = drag, s.section == section, s.fromIndex == index {
+                            let to = s.targetIndex
+                            if to != s.fromIndex { commit(s.fromIndex, to) }
+                        }
+                        drag = nil
+                        NSCursor.arrow.set()
+                    }
+            )
+    }
+}
+
 // 다크 "Color pill" 팔레트 (Claude Design 02안 hex 그대로).
 private enum Palette {
     static let bg            = Color(hex: 0x16161A)
@@ -450,6 +558,9 @@ private enum Palette {
     static let footerText    = Color(hex: 0xCFCFD6)
     static let footerBtnBG   = Color(hex: 0xFFFFFF, alpha: 0.06)
     static let quit          = Color(hex: 0xF0A0A0)
+
+    static let dropHi        = Color(hex: 0x818CF8, alpha: 0.16)  // 드롭 타깃 슬롯 하이라이트
+    static let dragLift      = Color(hex: 0x26262E)              // 들어올린 행(떠 있는 카드) 배경
 }
 
 private extension Color {
