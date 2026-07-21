@@ -51,6 +51,19 @@ open build/TossStock.app       # 메뉴바에 등록
 
 > Xcode 불필요(SwiftPM). 데이터 레이어만 헤드리스로 확인하려면 `build/TossStock.app/Contents/MacOS/TossStock --dump`.
 
+### 3. 업데이트 · 배포 (한 줄)
+
+코드를 고친 뒤 **재빌드 → 실행 중 인스턴스 종료 → `/Applications` 제자리 교체 → 재실행**을 한 명령어로 처리한다:
+
+```bash
+cd tossstock-app
+./Packaging/deploy.sh
+```
+
+- `build.sh`를 감싸 release 빌드·조립·서명한 뒤 설치본(`/Applications/TossStock.app`)을 **같은 경로에 교체**한다.
+- 로그인 항목은 경로 기반이라 같은 경로 교체로 다음 로그인부터 새 버전이 뜬다(항목이 없으면 자동 등록 시도).
+- 자주 쓰면 alias: `alias tossdeploy='bash ~/toss_stock/tossstock-app/Packaging/deploy.sh'`
+
 ### 인증
 
 자격증명을 설정하면 앱이 OAuth2 토큰을 자동 발급·캐시한다 (`~/.config/tossstock/token.json`, 만료 5분 전 선제 재발급). 패널 하단 **인증 점검** 버튼으로 토큰 발급 여부·계좌번호·토큰 만료시각을 확인할 수 있다.
@@ -91,8 +104,8 @@ open build/TossStock.app       # 메뉴바에 등록
 | 위치 | 내용 |
 |---|---|
 | 메뉴바 (한 줄) | 보유종목을 새로고침마다 회전 표시. 보유종목이 없으면 관심종목으로 폴백, 둘 다 없으면 `📈 종목 없음` |
-| 📊 보유종목 | `종목명  현재가  ±수익률%  평가손익` — 수익 초록 / 손실 빨강 |
-| ⭐ 관심종목 | `종목명  현재가  ▲등락률% (▲등락액)` — 상승 ▲초록 / 하락 ▼빨강 |
+| 📊 보유종목 | `종목명  현재가  ±수익률%  평가손익` — 수익 빨강 / 손실 파랑 |
+| ⭐ 관심종목 | `종목명  현재가  ▲등락률% (▲등락액)` — 상승 ▲빨강 / 하락 ▼파랑 |
 | 새로고침 | 즉시 갱신 |
 | 인증 점검 | 패널 내 토큰·계좌 상태 표시 |
 
@@ -125,7 +138,7 @@ open build/TossStock.app       # 메뉴바에 등록
 └── tossstock-app/         # 네이티브 메뉴바 앱 (SwiftPM)
     ├── Package.swift
     ├── Sources/TossStock/*.swift
-    └── Packaging/{Info.plist, build.sh}
+    └── Packaging/{Info.plist, build.sh, deploy.sh}
 
 ~/.config/tossstock/auth.env      # client_id / client_secret (비밀, chmod 600)
 ~/.config/tossstock/token.json    # access token 캐시 (런타임 생성)

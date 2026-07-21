@@ -290,11 +290,11 @@ struct PopupView: View {
         case .checking:
             authText("인증 확인 중…", Palette.textSecondary)
         case .ok(let no, let seq, let exp):
-            authText("인증 OK · 계좌 \(mask(no)) (seq \(seq)) · 토큰 만료 \(expiryText(exp))", Palette.up)
+            authText("인증 OK · 계좌 \(mask(no)) (seq \(seq)) · 토큰 만료 \(expiryText(exp))", Palette.success)
         case .rateLimited(let seq, let exp):
             authText("rate limit(분당 1회) · 캐시 seq \(seq.map(String.init) ?? "?") · 만료 \(expiryText(exp))", Palette.textSecondary)
         case .failed:
-            authText("인증 실패 — auth.env 의 client_id/secret 확인", Palette.down)
+            authText("인증 실패 — auth.env 의 client_id/secret 확인", Palette.error)
         }
     }
 
@@ -537,12 +537,17 @@ private enum Palette {
     static let manageLabel   = Color(hex: 0xDCDCE2)
     static let time          = Color(hex: 0x6F6F78)
 
-    static let up            = Color(hex: 0x34D399)
-    static let down          = Color(hex: 0xF87171)
+    // 등락/손익 색 — 토스증권 규약: 상승·수익 빨강, 하락·손실 파랑.
+    static let up            = Color(hex: 0xF04452)
+    static let down          = Color(hex: 0x3182F6)
     static let neutral       = Color(hex: 0x9A9AA3)
-    static let upPill        = Color(hex: 0x34D399, alpha: 0.14)
-    static let downPill      = Color(hex: 0xF87171, alpha: 0.14)
+    static let upPill        = Color(hex: 0xF04452, alpha: 0.14)
+    static let downPill      = Color(hex: 0x3182F6, alpha: 0.14)
     static let neutralPill   = Color(hex: 0xFFFFFF, alpha: 0.08)
+
+    // 인증 상태 색 — 등락과 무관한 성공/실패 의미(초록 OK / 소프트 레드 실패).
+    static let success       = Color(hex: 0x34D399)
+    static let error         = Color(hex: 0xF87171)
 
     static let indigo        = Color(hex: 0xA5B4FC)
     static let indigoBG      = Color(hex: 0x818CF8, alpha: 0.15)
