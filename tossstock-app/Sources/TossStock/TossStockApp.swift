@@ -4,7 +4,7 @@ import AppKit
 // ─────────────────────────────────────────────────────────────
 // 진입점 + 앱 골격.
 //   MenuBarExtra(.window): NSMenu가 아닌 플로팅 윈도우 → 메인 런루프 default 유지 →
-//   팝업 펼친 채로도 Task.sleep 폴링이 화면을 갱신(SwiftBar NSMenu 동결의 반례, Phase 0 게이트 통과).
+//   팝업 펼친 채로도 Task.sleep 폴링이 화면을 갱신한다.
 //   LSUIElement=true + setActivationPolicy(.accessory)로 Dock 미표시.
 // ─────────────────────────────────────────────────────────────
 

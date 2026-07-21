@@ -3,7 +3,7 @@ import Foundation
 // ─────────────────────────────────────────────────────────────
 // StockModel — @MainActor @Observable. 폴링 루프 소유 + 회전 타이틀 계산.
 // service 결과를 메인에서 '대입만'. 네트워크는 service(off-actor)에서, holdings·watch는 async let 병렬.
-// 섹션 통째 실패 시 .failed("조회 실패" 표시) — 결정 #4. watch 개별 누락은 row 단위 lookupFailed.
+// 섹션 통째 실패 시 .failed("조회 실패" 표시). watch 개별 누락은 row 단위 lookupFailed.
 // ─────────────────────────────────────────────────────────────
 
 enum LoadState<Row: Sendable>: Sendable {

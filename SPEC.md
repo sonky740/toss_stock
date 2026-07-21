@@ -1,10 +1,8 @@
 # SPEC — tossstock (네이티브 메뉴바 앱)
 
-**토스증권 Open API**로 보유종목 수익률과 관심종목 시세를 macOS 메뉴바에 표시하는 **SwiftUI 앱**이다. 펼친 채 실시간 갱신된다.
+**토스증권 Open API**로 보유종목 수익률과 관심종목 시세를 macOS 메뉴바에 표시하는 **SwiftUI 앱**이다. 실시간 갱신된다.
 
-> 데이터 소스는 **토스증권 Open API**(`https://openapi.tossinvest.com`, OAuth2 Client Credentials)다.
->
-> 과거에는 SwiftBar 셸 플러그인(`tossstock.10s.sh`)과 네이티브 앱을 병행했으나, **결정 #2에 따라 플러그인을 제거하고 네이티브 앱으로 일원화**했다. 이 문서는 네이티브 앱(`tossstock-app/`)만 다룬다.
+> 데이터 소스는 **토스증권 Open API**(`https://openapi.tossinvest.com`, OAuth2 Client Credentials)다. 이 문서는 네이티브 앱(`tossstock-app/`)만 다룬다.
 
 ---
 
@@ -84,7 +82,7 @@
 - **색상**: 수익률 > 0 → 빨강, < 0 → 파랑, = 0 → 회색. (토스증권 규약)
 
 상태별 표시:
-- 조회 실패(인증/오류) → `보유종목 조회 실패 (인증 확인)` (회색). stale 유지 안 함 — 섹션 통째 실패 시 해당 표시(결정 #4).
+- 조회 실패(인증/오류) → `보유종목 조회 실패 (인증 확인)` (회색). stale 유지 안 함 — 섹션 통째 실패 시 해당 표시.
 - 보유종목 0건(`items` 빈 배열) → `보유종목 없음` (회색).
 
 - **드래그 재배치**: 행을 눌러 위아래로 끌어 놓으면 순서가 바뀌고 `holdings_order.txt`에 즉시 저장된다(§2.3). 놓는 순간 1회만(commit-on-end) 인메모리 행을 재정렬·영속화하므로 네트워크 재요청·10초 폴링과 충돌하지 않는다. 메뉴바 `.window`는 비활성 창이라 AppKit `NSDraggingSession`(SwiftUI `.draggable`)이 시작되지 않아 **수동 `DragGesture`(+`highPriorityGesture`)**로 구현한다 — 버튼 탭과 동일한 이벤트 스트림. macOS는 클릭-드래그로 스크롤하지 않아(휠/투핑거 사용) 스크롤과 충돌하지 않는다.
