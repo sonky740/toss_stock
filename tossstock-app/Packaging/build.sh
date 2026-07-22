@@ -21,6 +21,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/TossStock"
 cp "$ROOT/Packaging/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/Packaging/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "==> ad-hoc codesign (entitlements 없음 = 미샌드박스)"
 codesign --force --sign - "$APP"

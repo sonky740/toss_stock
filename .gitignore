@@ -11,3 +11,6 @@ token.json
 # SwiftPM / 네이티브 앱 빌드 산출물
 tossstock-app/.build/
 tossstock-app/build/
+
+# 앱 아이콘 중간 산출물 (AppIcon.icns 는 make-icon.swift 로 재생성 — 커밋 대상)
+tossstock-app/Packaging/AppIcon.iconset/
