@@ -1,7 +1,7 @@
 import Foundation
 
 // ─────────────────────────────────────────────────────────────
-// Watchlist — symbols.tsv("코드<TAB>별칭") 읽기/쓰기/시드/추가/삭제.
+// Watchlist — symbols.tsv("코드<TAB>별칭") 읽기/쓰기/추가/삭제.
 // 셸 플러그인과 동일 형식·정제 규칙(cleanCode/cleanAlias)을 유지해 상호 호환.
 // ─────────────────────────────────────────────────────────────
 
@@ -24,9 +24,8 @@ enum Watchlist {
             .trimmingCharacters(in: .whitespaces)
     }
 
-    /// 관심종목 읽기. 파일 없으면 기본 시드 생성 후 반환.
+    /// 관심종목 읽기. 파일 없으면 빈 목록.
     static func read(_ paths: ConfigPaths = .standard) -> [WatchSymbol] {
-        seedIfMissing(paths)
         guard let text = try? String(contentsOf: paths.symbolsTSV, encoding: .utf8) else { return [] }
         var out: [WatchSymbol] = []
         for rawLine in text.split(whereSeparator: \.isNewline) {
@@ -63,12 +62,6 @@ enum Watchlist {
     /// 외부에서 정한 순서로 통째 저장(드래그 재배치). add/remove와 동일한 write 경로.
     static func save(_ list: [WatchSymbol], _ paths: ConfigPaths = .standard) {
         write(list, paths)
-    }
-
-    private static func seedIfMissing(_ paths: ConfigPaths) {
-        guard !FileManager.default.fileExists(atPath: paths.symbolsTSV.path) else { return }
-        try? FileManager.default.createDirectory(at: paths.dir, withIntermediateDirectories: true)
-        write([WatchSymbol(code: "0190C0", alias: "현피AI"), WatchSymbol(code: "0167A0", alias: "SOL탑")], paths)
     }
 
     private static func write(_ list: [WatchSymbol], _ paths: ConfigPaths) {
