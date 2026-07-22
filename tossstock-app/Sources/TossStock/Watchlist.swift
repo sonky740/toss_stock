@@ -59,6 +59,14 @@ enum Watchlist {
         write(read(paths).filter { $0.code != code }, paths)
     }
 
+    /// 기존 코드의 별칭만 교체(코드 없으면 무시). 빈 별칭이면 별칭 제거. 줄 순서·다른 항목은 보존.
+    static func setAlias(code rawCode: String, alias rawAlias: String, _ paths: ConfigPaths = .standard) {
+        let code = cleanCode(rawCode)
+        guard !code.isEmpty else { return }
+        let cleaned = cleanAlias(rawAlias)
+        write(read(paths).map { $0.code == code ? WatchSymbol(code: $0.code, alias: cleaned) : $0 }, paths)
+    }
+
     /// 외부에서 정한 순서로 통째 저장(드래그 재배치). add/remove와 동일한 write 경로.
     static func save(_ list: [WatchSymbol], _ paths: ConfigPaths = .standard) {
         write(list, paths)

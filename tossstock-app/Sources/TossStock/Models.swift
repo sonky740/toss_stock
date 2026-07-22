@@ -130,7 +130,7 @@ enum WatchChange: Sendable {
 
 struct WatchRow: Identifiable, Sendable {
     let id: String           // 종목코드
-    let rowName: String      // 드롭다운 행 표시명: 종목명 > 코드
+    let rowName: String      // 드롭다운 행 표시명: 종목명 · 별칭 (별칭 없으면 종목명 > 코드)
     let titleName: String    // 회전 타이틀 표시명: 별칭 > 종목명 > 코드
     let currency: Currency
     let lastPrice: Double

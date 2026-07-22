@@ -51,6 +51,8 @@ struct TossService: Sendable {
             let resolved = nameBy[sym.code]
             let full = resolved ?? sym.code
             let title = sym.alias.isEmpty ? full : sym.alias
+            // 팝업 행 표시명: 종목명 · 별칭 병기(별칭 없으면 종목명, 종목명 없으면 별칭 > 코드). §3.3 — 관리 표시명과 동일 규칙.
+            let row = sym.alias.isEmpty ? full : (resolved.map { "\($0) · \(sym.alias)" } ?? sym.alias)
 
             // candles(MARKET_DATA_CHART, limit 5/s): 연속 호출 사이 250ms 페이싱(앞 호출과만).
             if !firstCandle { try? await Task.sleep(for: .milliseconds(250)) }
@@ -65,7 +67,7 @@ struct TossService: Sendable {
             } else {
                 change = .noPrevClose
             }
-            rows.append(WatchRow(id: sym.code, rowName: full, titleName: title,
+            rows.append(WatchRow(id: sym.code, rowName: row, titleName: title,
                                  currency: price.currency, lastPrice: last, change: change, resolvedName: resolved))
         }
         return rows

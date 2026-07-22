@@ -67,6 +67,12 @@ final class StockModel {
         return nil
     }
 
+    /// 보유종목 표시명에 별칭 병기: 코드가 관심종목에 별칭으로 등록돼 있으면 "종목명 · 별칭", 없으면 종목명. §3.2
+    func aliased(_ name: String, for code: String) -> String {
+        guard let alias = watchSymbols.first(where: { $0.code == code })?.alias, !alias.isEmpty else { return name }
+        return "\(name) · \(alias)"
+    }
+
     /// 앱 내 인증 점검(토큰 발급 + accounts 조회). 429면 캐시 폴백.
     func checkAuth() {
         authDismissTask?.cancel()   // 직전 점검의 자동 숨김 타이머 취소
@@ -160,7 +166,13 @@ final class StockModel {
 
     private func titleCandidates() -> [String] {
         if case .loaded(let rows) = holdings, !rows.isEmpty {
-            return rows.map { "\($0.name) \(Fmt.price($0.lastPrice, $0.currency)) \(Fmt.pctSigned($0.ratePercent, $0.direction))" }
+            // 메뉴바에 뜨는 보유종목이 관심종목(symbols.tsv)에 별칭으로 등록돼 있으면 종목명 대신 별칭. §3.1
+            let aliasBy = Dictionary(watchSymbols.compactMap { $0.alias.isEmpty ? nil : ($0.code, $0.alias) },
+                                     uniquingKeysWith: { a, _ in a })
+            return rows.map { r in
+                let name = aliasBy[r.id] ?? r.name
+                return "\(name) \(Fmt.price(r.lastPrice, r.currency)) \(Fmt.pctSigned(r.ratePercent, r.direction))"
+            }
         }
         if case .loaded(let rows) = watch, !rows.isEmpty {
             return rows.map(Self.watchTitle)

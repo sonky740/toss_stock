@@ -16,6 +16,9 @@ struct PopupView: View {
     @State private var contentHeight: CGFloat = 0
     @State private var manageExpanded = false
     @State private var drag: DragSession?          // 활성 드래그 재배치 세션(섹션 공유)
+    @State private var editingCode: String?        // 별칭 인라인 편집 중인 행(코드). nil = 편집 없음
+    @State private var editingAlias = ""
+    @FocusState private var aliasFieldFocused: Bool
 
     var body: some View {
         Group {
@@ -80,7 +83,7 @@ struct PopupView: View {
     }
 
     private func positionRow(_ r: PositionRow) -> some View {
-        pillRow(name: r.name,
+        pillRow(name: model.aliased(r.name, for: r.id),
                 price: Fmt.price(r.lastPrice, r.currency),
                 pctText: Fmt.pctSigned(r.ratePercent, r.direction),
                 pnlText: Fmt.pnl(r.pnlAmount, r.currency),
@@ -223,30 +226,79 @@ struct PopupView: View {
         }
     }
 
-    private func manageRow(_ sym: WatchSymbol) -> some View {
+    @ViewBuilder private func manageRow(_ sym: WatchSymbol) -> some View {
         HStack(spacing: 8) {
-            Text(manageLabel(sym))
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(Palette.manageLabel)
-                .lineLimit(1).truncationMode(.tail)
-            Spacer(minLength: 4)
-            Text("(\(sym.code))")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(Palette.time)
-            Button {
-                Watchlist.remove(code: sym.code)
-                model.reloadWatchlist()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(Palette.priceMono)
-                    .frame(width: 20, height: 20)
-                    .background(Palette.deleteBG, in: Circle())
+            if editingCode == sym.code {
+                // 별칭 인라인 편집 — 표시명 자리에 TextField. ✓/Enter 저장, ✗ 취소.
+                TextField("별칭(비우면 제거)", text: $editingAlias)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Palette.textPrimary)
+                    .focused($aliasFieldFocused)
+                    .onSubmit { commitAliasEdit(sym.code) }
+                    .onAppear { aliasFieldFocused = true }   // 편집 진입 시 자동 포커스
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Palette.fieldBorder, lineWidth: 1))
+                    .frame(maxWidth: .infinity)
+                codeTag(sym.code)
+                circleIcon("checkmark", bg: Palette.addBtn, tint: .white) { commitAliasEdit(sym.code) }
+                    .help("저장")
+                circleIcon("xmark", bg: Palette.deleteBG) { cancelAliasEdit() }
+                    .help("취소")
+            } else {
+                // 표시명 클릭 → 별칭 편집 진입(별칭 없던 종목도 새로 지정 가능).
+                Button { beginAliasEdit(sym) } label: {
+                    Text(manageLabel(sym))
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Palette.manageLabel)
+                        .lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("별칭 수정")
+                codeTag(sym.code)
+                circleIcon("xmark", bg: Palette.deleteBG) {
+                    Watchlist.remove(code: sym.code)
+                    model.reloadWatchlist()
+                }
+                .help("삭제")
             }
-            .buttonStyle(.plain)
-            .help("삭제")
         }
         .padding(.horizontal, 15).padding(.vertical, 6)
+    }
+
+    private func codeTag(_ code: String) -> some View {
+        Text("(\(code))")
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(Palette.time)
+    }
+
+    private func circleIcon(_ symbol: String, bg: Color, tint: Color = Palette.priceMono, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 20, height: 20)
+                .background(bg, in: Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func beginAliasEdit(_ sym: WatchSymbol) {
+        editingAlias = sym.alias
+        editingCode = sym.code
+    }
+
+    private func commitAliasEdit(_ code: String) {
+        Watchlist.setAlias(code: code, alias: editingAlias)
+        editingCode = nil
+        model.reloadWatchlist()
+    }
+
+    private func cancelAliasEdit() {
+        editingCode = nil
     }
 
     private func manageLabel(_ s: WatchSymbol) -> String {
