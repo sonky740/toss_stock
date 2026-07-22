@@ -2,6 +2,10 @@
 
 [토스증권 Open API](https://developers.tossinvest.com/docs)로 Toss 증권 데이터를 가져와 macOS 메뉴바에 표시하는 **SwiftUI 앱**이다. **10초마다 실시간 갱신**된다.
 
+<p align="center">
+  <img src="assets/readme.png" alt="tossstock 메뉴바 앱 — 보유종목·관심종목 팝업" width="360">
+</p>
+
 - 메뉴바 한 줄에 보유종목을 **회전** 노출 (`종목명 현재가 ±수익률%`)
 - **📊 보유종목** — 매입가 대비 누적 수익률·평가손익
 - **⭐ 관심종목** — 당일 등락률·등락액
@@ -128,6 +132,7 @@ cd tossstock-app
 .
 ├── README.md              # 이 문서
 ├── SPEC.md                # 동작 명세 (source of truth)
+├── assets/                # README 스크린샷 등 문서용 이미지
 └── tossstock-app/         # 네이티브 메뉴바 앱 (SwiftPM)
     ├── Package.swift
     ├── Sources/TossStock/*.swift
