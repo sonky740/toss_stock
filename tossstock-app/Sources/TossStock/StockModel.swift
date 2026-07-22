@@ -61,6 +61,36 @@ final class StockModel {
         refreshNow()
     }
 
+    // ── 관심종목 CRUD (파일 기록 + 인메모리 즉시 반영. 삭제·별칭수정은 네트워크 불필요) ──
+
+    /// 추가. 새 행 시세·등락은 네트워크가 필요하므로 refreshNow로 채운다(관리 목록엔 즉시 노출). 중복이면 false.
+    @discardableResult
+    func addWatch(code: String, alias: String) -> Bool {
+        guard Watchlist.add(code: code, alias: alias) else { return false }
+        reloadWatchlist()
+        return true
+    }
+
+    /// 삭제. 파일·watchSymbols·로드된 행에서 즉시 제거(다음 폴링까지 안 기다림).
+    func removeWatch(code rawCode: String) {
+        Watchlist.remove(code: rawCode)
+        watchSymbols = Watchlist.read()
+        guard case .loaded(var rows) = watch else { return }
+        rows.removeAll { $0.id == Watchlist.cleanCode(rawCode) }
+        watch = .loaded(rows)
+    }
+
+    /// 별칭 수정. 파일·watchSymbols 갱신 + 로드된 행 표시명 즉시 재계산(lookupFailed 행은 코드 표시 유지).
+    func setWatchAlias(code rawCode: String, alias: String) {
+        Watchlist.setAlias(code: rawCode, alias: alias)
+        watchSymbols = Watchlist.read()
+        let code = Watchlist.cleanCode(rawCode)
+        guard case .loaded(var rows) = watch, let i = rows.firstIndex(where: { $0.id == code }) else { return }
+        if case .lookupFailed = rows[i].change { return }
+        rows[i] = rows[i].relabeled(alias: watchSymbols.first { $0.code == code }?.alias ?? "")
+        watch = .loaded(rows)
+    }
+
     /// 삭제 메뉴 라벨용: 종목명(조회 성공시).
     func resolvedName(_ code: String) -> String? {
         if case .loaded(let rows) = watch { return rows.first { $0.id == code }?.resolvedName }
@@ -117,7 +147,7 @@ final class StockModel {
         }()
         let (hr, wr) = await (h, w)
         holdings = applyHoldingsOrder(hr)   // 매 갱신마다 저장된 사용자 순서 재적용
-        watch = wr                          // 관심종목은 watchSymbols(=symbols.tsv) 순서로 이미 도착
+        watch = reconcileWatch(wr)          // fetch 결과를 '현재' watchSymbols에 맞춤(in-flight 레이스 차단)
         lastUpdated = Date()
         advanceRotation()
     }
@@ -125,6 +155,23 @@ final class StockModel {
     private func applyHoldingsOrder(_ state: LoadState<PositionRow>) -> LoadState<PositionRow> {
         guard case .loaded(let rows) = state else { return state }
         return .loaded(HoldingsOrder.sorted(rows, by: \.id))
+    }
+
+    /// 폴링 커밋 시 fetch 결과를 '현재' watchSymbols에 정합(applyHoldingsOrder와 대칭).
+    /// refresh()가 캡처한 옛 syms로 만든 행이 그 사이 일어난 삭제/별칭수정/재배치를 되돌리는 레이스를 차단한다.
+    /// 삭제된 코드는 버리고, 별칭은 현재 값으로 relabel, 순서는 watchSymbols 기준. lookupFailed 행은 코드 표시 유지.
+    private func reconcileWatch(_ state: LoadState<WatchRow>) -> LoadState<WatchRow> {
+        guard case .loaded(let fetched) = state else { return state }
+        let aliasBy = Dictionary(watchSymbols.map { ($0.code, $0.alias) }, uniquingKeysWith: { a, _ in a })
+        let rank = Dictionary(watchSymbols.enumerated().map { ($1.code, $0) }, uniquingKeysWith: { a, _ in a })
+        let reconciled = fetched
+            .filter { rank[$0.id] != nil }
+            .map { row -> WatchRow in
+                if case .lookupFailed = row.change { return row }
+                return row.relabeled(alias: aliasBy[row.id] ?? "")
+            }
+            .sorted { (rank[$0.id] ?? .max) < (rank[$1.id] ?? .max) }
+        return .loaded(reconciled)
     }
 
     // ── 드래그 재배치 (네트워크 없음: 인메모리 재정렬 + 즉시 영속화) ──

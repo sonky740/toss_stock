@@ -138,6 +138,24 @@ struct WatchRow: Identifiable, Sendable {
     let resolvedName: String?  // 종목명 조회 성공시만(삭제 메뉴 라벨용)
 }
 
+extension WatchRow {
+    /// 표시명 단일 규칙(§3.3). 초기 빌드(TossService)와 별칭 즉시 반영(relabeled)이 같은 문자열을 내도록 공유.
+    /// rowName = 종목명 · 별칭(별칭 없으면 종목명 > 코드), titleName = 별칭 > 종목명 > 코드.
+    static func displayNames(code: String, resolvedName: String?, alias: String) -> (row: String, title: String) {
+        let full = resolvedName ?? code
+        let title = alias.isEmpty ? full : alias
+        let row = alias.isEmpty ? full : (resolvedName.map { "\($0) · \(alias)" } ?? alias)
+        return (row, title)
+    }
+
+    /// 별칭만 바꿔 표시명을 재계산한 복제본(인메모리 즉시 반영·reconcile용). resolvedName·시세·등락은 보존.
+    func relabeled(alias: String) -> WatchRow {
+        let (row, title) = WatchRow.displayNames(code: id, resolvedName: resolvedName, alias: alias)
+        return WatchRow(id: id, rowName: row, titleName: title, currency: currency,
+                        lastPrice: lastPrice, change: change, resolvedName: resolvedName)
+    }
+}
+
 struct AuthStatus: Sendable {
     let accountNo: String
     let accountSeq: Int

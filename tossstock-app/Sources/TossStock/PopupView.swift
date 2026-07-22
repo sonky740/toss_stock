@@ -259,10 +259,7 @@ struct PopupView: View {
                 .buttonStyle(.plain)
                 .help("별칭 수정")
                 codeTag(sym.code)
-                circleIcon("xmark", bg: Palette.deleteBG) {
-                    Watchlist.remove(code: sym.code)
-                    model.reloadWatchlist()
-                }
+                circleIcon("xmark", bg: Palette.deleteBG) { model.removeWatch(code: sym.code) }
                 .help("삭제")
             }
         }
@@ -292,9 +289,8 @@ struct PopupView: View {
     }
 
     private func commitAliasEdit(_ code: String) {
-        Watchlist.setAlias(code: code, alias: editingAlias)
+        model.setWatchAlias(code: code, alias: editingAlias)
         editingCode = nil
-        model.reloadWatchlist()
     }
 
     private func cancelAliasEdit() {
@@ -311,9 +307,8 @@ struct PopupView: View {
     }
 
     private func add() {
-        if Watchlist.add(code: newCode, alias: newAlias) {
+        if model.addWatch(code: newCode, alias: newAlias) {
             newCode = ""; newAlias = ""
-            model.reloadWatchlist()
         }
     }
 
