@@ -49,7 +49,7 @@
 - 관심종목: `~/.config/tossstock/symbols.tsv`
   - 형식: 한 줄당 `종목코드<TAB>별칭`. 별칭은 비어 있을 수 있다. `#`로 시작하는 줄은 주석.
   - **줄 순서 = 관심종목 표시 순서**. 드래그 재배치(§3.3)가 이 줄 순서를 다시 쓴다.
-  - 최초 실행 시 자동 시드: `0190C0\t현피AI`, `0167A0\tSOL탑`.
+  - 파일이 없으면 **빈 목록**으로 시작한다(자동 시드 없음). 사용자가 패널(§3.4)에서 직접 추가하거나 파일을 만든다. 관심종목 0건 표시는 §3.3.
   - 입력 정제: 코드는 `영숫자·.·-`만(대문자화), 별칭은 탭·개행·파이프 제거 후 트림.
 - 보유종목 순서: `~/.config/tossstock/holdings_order.txt`
   - 형식: 한 줄당 종목 심볼. 드래그 재배치(§3.2)가 현재 표시 순서를 통째로 저장한다.
@@ -181,12 +181,15 @@ tossstock-app/
 │   ├── TossAPI.swift              URLSession 요청계층(Bearer·계좌헤더·401/429 재시도) + TossHTTP
 │   ├── TossAuth.swift             actor TokenStore(토큰 캐시·in-flight·디스크 재확인) + ConfigPaths
 │   ├── Models.swift               DTO(수동 init + decimal) + 표시 Row 타입
-│   ├── Watchlist.swift            symbols.tsv 읽기/시드/추가/삭제/순서저장 + 정제
+│   ├── Watchlist.swift            symbols.tsv 읽기/추가/삭제/순서저장 + 정제
 │   ├── HoldingsOrder.swift        holdings_order.txt 읽기/쓰기 + 저장 순서로 정렬(드래그 재배치)
 │   └── Format.swift               ₩/$/원/달러·등락·화살표 포맷(§3.7)
 └── Packaging/
-    ├── Info.plist                 LSUIElement, 번들 식별자
-    └── build.sh                   swift build → .app 조립 → ad-hoc codesign
+    ├── Info.plist                 LSUIElement, 번들 식별자, 앱 아이콘(CFBundleIconFile)
+    ├── build.sh                   swift build → .app 조립(아이콘 포함) → ad-hoc codesign
+    ├── deploy.sh                  재빌드 → 실행 인스턴스 종료 → /Applications 제자리 교체 → 재실행
+    ├── make-icon.swift            AppIcon.iconset/.icns 생성 스크립트
+    └── AppIcon.icns               앱 아이콘(make-icon.swift로 재생성, 커밋 대상)
 ```
 
 ---
