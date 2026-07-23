@@ -18,6 +18,7 @@ struct PopupView: View {
     @State private var reorder = ReorderController()   // 드래그 재배치 세션 + edge 자동 스크롤(섹션 공유)
     @State private var editingCode: String?        // 별칭 인라인 편집 중인 행(코드). nil = 편집 없음
     @State private var editingAlias = ""
+    @State private var tooltip: (text: String, point: CGPoint)?   // 미국 종목 hover 툴팁(popup 좌표). 최상위 overlay 렌더.
     @FocusState private var aliasFieldFocused: Bool
 
     var body: some View {
@@ -31,7 +32,31 @@ struct PopupView: View {
         .frame(width: 360)
         .background { Palette.bg.ignoresSafeArea() }
         .environment(\.colorScheme, .dark)
+        .coordinateSpace(.named("popup"))
+        .overlay { tooltipOverlay }         // 행이 아닌 최상위에 그려 z-index 최상위 + ScrollView clip 회피
         .onDisappear { reorder.cancel() }   // 팝업 닫힘 등 onEnded 없이 중단 시 tick 루프 종료
+    }
+
+    // 미국 종목 hover 시 popup 좌표(포인터) 근처에 뜨는 커스텀 툴팁. x는 팝업 폭(360) 안으로 clamp.
+    @ViewBuilder private var tooltipOverlay: some View {
+        if let tooltip {
+            Text(tooltip.text)
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.textPrimary)
+                .padding(.horizontal, 9).padding(.vertical, 6)
+                .frame(maxWidth: 220, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(Palette.tooltipBG, in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Palette.fieldBorder, lineWidth: 1))
+                .shadow(color: .black.opacity(0.5), radius: 8, y: 3)
+                .position(x: min(max(tooltip.point.x, 115), 245), y: tooltip.point.y + 28)
+                .allowsHitTesting(false)
+        }
+    }
+
+    // RowInteraction 이 보고하는 hover 위치를 받는다. text 가 nil(한국·hover 종료)이면 툴팁을 숨긴다.
+    private func setTooltip(_ text: String?, _ point: CGPoint) {
+        tooltip = text.map { ($0, point) }
     }
 
     private var main: some View {
@@ -98,7 +123,9 @@ struct PopupView: View {
                 price: Fmt.price(r.lastPrice, r.currency),
                 pctText: Fmt.pctSigned(r.ratePercent, r.direction),
                 pnlText: Fmt.pnl(r.pnlAmount, r.currency),
-                direction: r.direction)
+                direction: r.direction,
+                onTap: { openStock(code: r.id, isUS: r.currency.isUSD) },
+                help: r.currency.isUSD ? Self.usStockHelp : nil)
     }
 
     // ── 관심종목 ──
@@ -129,16 +156,23 @@ struct PopupView: View {
                     price: Fmt.price(r.lastPrice, r.currency),
                     pctText: "\(Fmt.arrow(dir))\(Fmt.pctAbs(rate))",
                     pnlText: "\(Fmt.arrow(dir))\(Fmt.changeAbs(chg, r.currency))",
-                    direction: dir)
+                    direction: dir,
+                    onTap: { openStock(code: r.id, isUS: r.currency.isUSD) },
+                    help: r.currency.isUSD ? Self.usStockHelp : nil)
         case .noPrevClose:
-            noteRow(name: r.rowName, price: Fmt.price(r.lastPrice, r.currency), note: "등락 데이터 없음")
+            noteRow(name: r.rowName, price: Fmt.price(r.lastPrice, r.currency), note: "등락 데이터 없음",
+                    onTap: { openStock(code: r.id, isUS: r.currency.isUSD) },
+                    help: r.currency.isUSD ? Self.usStockHelp : nil)
         case .lookupFailed:
-            noteRow(name: r.rowName, price: nil, note: "조회실패 (코드/인증 확인)")
+            noteRow(name: r.rowName, price: nil, note: "조회실패 (코드/인증 확인)",
+                    onTap: { openStock(code: r.id, isUS: isUSCode(r.id)) },
+                    help: isUSCode(r.id) ? Self.usStockHelp : nil)
         }
     }
 
     // ── 공통 행: 색 액센트 바 + 종목/현재가 + 등락 pill + 손익 ──
-    private func pillRow(name: String, price: String, pctText: String, pnlText: String, direction: Direction) -> some View {
+    private func pillRow(name: String, price: String, pctText: String, pnlText: String, direction: Direction,
+                         onTap: @escaping () -> Void, help: String?) -> some View {
         let tint = tintColor(direction)
         return HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
@@ -165,10 +199,12 @@ struct PopupView: View {
         .padding(.vertical, 6)
         .padding(.leading, 29).padding(.trailing, 15)
         .accentBar(tint)
+        .modifier(RowInteraction(onTap: onTap, help: help, report: setTooltip))
     }
 
     // 등락 데이터 없음 / 조회실패 — pill 없이 보조색 노트.
-    private func noteRow(name: String, price: String?, note: String) -> some View {
+    private func noteRow(name: String, price: String?, note: String,
+                         onTap: @escaping () -> Void, help: String?) -> some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
@@ -189,6 +225,7 @@ struct PopupView: View {
         .padding(.vertical, 6)
         .padding(.leading, 29).padding(.trailing, 15)
         .accentBar(Palette.neutral)
+        .modifier(RowInteraction(onTap: onTap, help: help, report: setTooltip))
     }
 
     // ── 관심종목 관리 (인라인 추가/삭제) ──
@@ -448,6 +485,21 @@ struct PopupView: View {
         Rectangle().fill(Palette.divider).frame(height: 1)
     }
 
+    // ── 종목 페이지 열기 (§3.2/§3.3) ──
+    // 한국: tossinvest.com/stocks/A{code} 로 정확한 딥링크(KRX 표준코드 A접두사).
+    // 미국: Open API가 티커만 주고 웹 URL용 productCode(US…/NAS0…/AMX0…)를 안 줘 정확한 딥링크가 불가
+    //   → 홈으로 이동 + 툴팁 안내. currency로 KR/US 판별(조회실패 행은 currency 신뢰 불가 → code 첫 글자).
+    static let usStockHelp = "미국 종목은 상세 페이지 바로가기를 지원하지 않아요."
+
+    private func openStock(code: String, isUS: Bool) {
+        let s = isUS ? "https://www.tossinvest.com/" : "https://www.tossinvest.com/stocks/A\(code)"
+        guard let url = URL(string: s) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    // 조회실패 행 폴백: 종목명·통화 조회가 안 돼 currency가 강제 KRW로 채워진 경우 code 형태로 판별.
+    private func isUSCode(_ code: String) -> Bool { !(code.first?.isNumber ?? true) }
+
     // ── helpers ──
     private func placeholder(_ text: String) -> some View {
         Text(text)
@@ -479,6 +531,34 @@ struct PopupView: View {
     private func expiryText(_ d: Date?) -> String {
         // 토큰은 ~24h 유효 → 만료가 익일인 경우가 많아 시간만 표기하면 당일로 오해. 월·일 병기.
         d?.formatted(.dateTime.month().day().hour().minute()) ?? "?"
+    }
+}
+
+// 종목 행 상호작용: 본문 탭(종목 페이지 열기) + hover 시 pointer 커서 + 미국 종목 툴팁 위치 보고.
+//  - 탭: 좌측 28px 드래그 핸들(Reorderable overlay·highPriorityGesture)이 그 영역은 우선 소비하므로 본문에만 걸린다.
+//  - 커서: MenuBarExtra(.window)에서도 포인터 이동 시 OS가 커서를 리셋하므로 onContinuousHover .active 마다 재-set
+//    (드래그 핸들과 동일 패턴). 좌측 스트립은 핸들의 openHand 가 이기도록 둔다.
+//  - 툴팁: 행 overlay 로 그리면 인접 행이 덮으므로(z-index) 그리지 않고, popup 좌표만 상위로 보고한다.
+//    실제 렌더는 PopupView 최상위 overlay(§tooltipOverlay) — ScrollView clip·행간 가림 없이 항상 위.
+private struct RowInteraction: ViewModifier {
+    let onTap: () -> Void
+    let help: String?
+    let report: (String?, CGPoint) -> Void   // (help, popup좌표). 벗어나면 (nil, _).
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+            .onContinuousHover(coordinateSpace: .named("popup")) { phase in
+                switch phase {
+                case .active(let p):
+                    NSCursor.pointingHand.set()
+                    report(help, p)
+                case .ended:
+                    NSCursor.arrow.set()
+                    report(nil, .zero)
+                }
+            }
     }
 }
 
@@ -747,6 +827,7 @@ private enum Palette {
 
     static let dropHi        = Color(hex: 0x818CF8, alpha: 0.16)  // 드롭 타깃 슬롯 하이라이트
     static let dragLift      = Color(hex: 0x26262E)              // 들어올린 행(떠 있는 카드) 배경
+    static let tooltipBG     = Color(hex: 0x2E2E38)              // 미국 종목 hover 커스텀 툴팁 배경
 }
 
 private extension Color {
