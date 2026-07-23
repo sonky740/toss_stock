@@ -15,7 +15,7 @@ struct PopupView: View {
     @State private var newAlias = ""
     @State private var contentHeight: CGFloat = 0
     @State private var manageExpanded = false
-    @State private var drag: DragSession?          // 활성 드래그 재배치 세션(섹션 공유)
+    @State private var reorder = ReorderController()   // 드래그 재배치 세션 + edge 자동 스크롤(섹션 공유)
     @State private var editingCode: String?        // 별칭 인라인 편집 중인 행(코드). nil = 편집 없음
     @State private var editingAlias = ""
     @FocusState private var aliasFieldFocused: Bool
@@ -31,6 +31,7 @@ struct PopupView: View {
         .frame(width: 360)
         .background { Palette.bg.ignoresSafeArea() }
         .environment(\.colorScheme, .dark)
+        .onDisappear { reorder.cancel() }   // 팝업 닫힘 등 onEnded 없이 중단 시 tick 루프 종료
     }
 
     private var main: some View {
@@ -53,9 +54,19 @@ struct PopupView: View {
                         }
                     }
                 )
+                // 콘텐츠 서브트리에 심어 뒤의 NSScrollView 참조를 잡는다(드래그 edge 자동 스크롤용).
+                .background(ScrollViewGrabber { reorder.attach($0) })
             }
             .frame(height: min(max(contentHeight, 60), 520))
-            .scrollDisabled(drag != nil)  // 드래그 재배치 중 스크롤 충돌 방지
+            // 뷰포트(스크롤 안 되는 바깥 프레임)의 글로벌 위치 → 드래그 중 edge 밴드 판정 기준.
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.onChange(of: proxy.frame(in: .global), initial: true) { _, f in
+                        reorder.setViewport(f)
+                    }
+                }
+            )
+            // scrollDisabled 없음: 자동 스크롤 델타(S)를 translation 에 실시간 합산해 정합하므로 desync 가드 불필요.
             hairline                      // 하단 풀폭 구분선
             footer
         }
@@ -73,7 +84,7 @@ struct PopupView: View {
             else {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
                     positionRow(r).modifier(Reorderable(
-                        section: .holding, index: i, count: rows.count, drag: $drag,
+                        section: .holding, index: i, count: rows.count, controller: reorder,
                         commit: { from, to in
                             withAnimation(.snappy(duration: 0.22)) { model.moveHolding(from: from, to: to) }
                         }))
@@ -102,7 +113,7 @@ struct PopupView: View {
             else {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
                     watchRow(r).modifier(Reorderable(
-                        section: .watch, index: i, count: rows.count, drag: $drag,
+                        section: .watch, index: i, count: rows.count, controller: reorder,
                         commit: { from, to in
                             withAnimation(.snappy(duration: 0.22)) { model.moveWatch(from: from, to: to) }
                         }))
@@ -511,14 +522,15 @@ private struct Reorderable: ViewModifier {
     let section: ReorderSection
     let index: Int
     let count: Int
-    @Binding var drag: DragSession?
+    let controller: ReorderController
     let commit: (_ from: Int, _ to: Int) -> Void
 
     @State private var rowHeight: CGFloat = 44
 
-    private var isDragging: Bool { drag?.section == section && drag?.fromIndex == index }
+    private var session: DragSession? { controller.session }
+    private var isDragging: Bool { session?.section == section && session?.fromIndex == index }
     private var isTarget: Bool {
-        guard let d = drag, d.section == section, d.fromIndex != index else { return false }
+        guard let d = session, d.section == section, d.fromIndex != index else { return false }
         return d.targetIndex == index
     }
 
@@ -536,7 +548,7 @@ private struct Reorderable: ViewModifier {
             )
             .scaleEffect(isDragging ? 1.03 : 1)
             .shadow(color: .black.opacity(isDragging ? 0.45 : 0), radius: isDragging ? 8 : 0, y: isDragging ? 3 : 0)
-            .offset(y: isDragging ? (drag?.translation ?? 0) : 0)
+            .offset(y: isDragging ? (session?.translation ?? 0) : 0)
             .zIndex(isDragging ? 1 : 0)
     }
 
@@ -547,7 +559,7 @@ private struct Reorderable: ViewModifier {
             .frame(width: 28)
             .contentShape(Rectangle())
             .onContinuousHover { phase in
-                guard drag == nil else { return }   // 드래그 중엔 쥔 손(아래 gesture) 유지
+                guard controller.session == nil else { return }   // 드래그 중엔 쥔 손(아래 gesture) 유지
                 switch phase {
                 case .active: NSCursor.openHand.set()
                 case .ended:  NSCursor.arrow.set()
@@ -559,18 +571,140 @@ private struct Reorderable: ViewModifier {
                 DragGesture(minimumDistance: 5, coordinateSpace: .global)
                     .onChanged { value in
                         NSCursor.closedHand.set()
-                        drag = DragSession(section: section, fromIndex: index, rowHeight: rowHeight,
-                                           count: count, translation: value.translation.height)
+                        controller.dragChanged(section: section, index: index, count: count, rowHeight: rowHeight,
+                                               baseTranslation: value.translation.height,
+                                               pointerGlobalY: value.location.y)
                     }
                     .onEnded { _ in
-                        if let s = drag, s.section == section, s.fromIndex == index {
-                            let to = s.targetIndex
-                            if to != s.fromIndex { commit(s.fromIndex, to) }
+                        if let move = controller.dragEnded(), move.section == section, move.from == index {
+                            commit(move.from, move.to)
                         }
-                        drag = nil
                         NSCursor.arrow.set()
                     }
             )
+    }
+}
+
+// 드래그 재배치 세션 소유 + 포인터가 뷰포트 상/하단 밴드에 들어오면 스크롤을 자동으로 민다.
+//   - session 만 @Observable 로 뷰가 관찰(offset·타깃 하이라이트). 나머지는 내부 상태.
+//   - enclosingScrollView(정식 AppKit API)로 SwiftUI ScrollView 뒤의 NSScrollView 참조 확보.
+//   - 스크롤 델타 S = contentView.bounds.origin.y − 드래그 시작 시점 origin.y.
+//     DragGesture(.global) 의 translation 은 포인터-앵커(스크롤 독립) → 유효 translation = base + S.
+//     떠 있는 행 offset 과 targetIndex 둘 다 S 를 더해 정합(포인터를 edge 에 멈춰도 S 가 커지며 타깃 전진).
+//   - 스크롤은 onChanged 가 아니라 독립 Task 루프가 몬다: 사용자가 edge 에서 포인터를 멈추면
+//     onChanged 가 안 불리기 때문. Timer 아닌 Task.sleep(§4.1: .eventTracking 모드서도 도는 폴링과 동일).
+@MainActor
+@Observable
+final class ReorderController {
+    var session: DragSession?
+
+    @ObservationIgnored private var baseTranslation: CGFloat = 0
+    @ObservationIgnored private var scrollAtStart: CGFloat = 0
+    @ObservationIgnored private var pointerGlobalY: CGFloat = 0
+    @ObservationIgnored private var viewport: CGRect = .zero
+    @ObservationIgnored private weak var scrollView: NSScrollView?
+    @ObservationIgnored private var loop: Task<Void, Never>?
+
+    private let edgeBand: CGFloat = 44      // 뷰포트 상/하단 이 폭 안에 포인터가 들면 자동 스크롤
+    private let maxStep: CGFloat = 14       // tick 당 최대 스크롤 px(밴드 깊이에 비례)
+
+    func attach(_ sv: NSScrollView) { scrollView = sv }
+    func setViewport(_ frame: CGRect) { viewport = frame }
+
+    /// 드래그 onChanged 마다 호출. 첫 호출에서 스크롤 기준점을 잡고 tick 루프를 띄운다.
+    func dragChanged(section: ReorderSection, index: Int, count: Int, rowHeight: CGFloat,
+                     baseTranslation: CGFloat, pointerGlobalY: CGFloat) {
+        if session == nil { scrollAtStart = currentOrigin }
+        self.baseTranslation = baseTranslation
+        self.pointerGlobalY = pointerGlobalY
+        session = DragSession(section: section, fromIndex: index, rowHeight: rowHeight,
+                              count: count, translation: baseTranslation + scrollDelta)
+        if loop == nil { startLoop() }
+    }
+
+    /// 드래그 onEnded. 커밋 대상 (section, from, to) 를 돌려주고 세션·루프를 정리한다.
+    func dragEnded() -> (section: ReorderSection, from: Int, to: Int)? {
+        let s = session
+        cancel()
+        guard let s else { return nil }
+        let to = s.targetIndex
+        return to == s.fromIndex ? nil : (s.section, s.fromIndex, to)
+    }
+
+    /// onEnded 없이 드래그가 중단될 때(팝업 닫힘 등) 세션·tick 루프를 정리해 idle 공회전을 막는다.
+    /// 활성 드래그가 없으면 no-op. (그 밖의 희귀 중단은 tick 의 session 가드+no-op scrollBy 로 무해.)
+    func cancel() {
+        guard session != nil || loop != nil else { return }
+        session = nil
+        loop?.cancel()
+        loop = nil
+    }
+
+    private var currentOrigin: CGFloat { scrollView?.contentView.bounds.origin.y ?? 0 }
+    private var scrollDelta: CGFloat { currentOrigin - scrollAtStart }
+
+    private func startLoop() {
+        loop = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.session != nil else { return }
+                self.tick()
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
+    private func tick() {
+        guard session != nil, let sv = scrollView, viewport.height > 0 else { return }
+        let topDist = pointerGlobalY - viewport.minY
+        let botDist = viewport.maxY - pointerGlobalY
+        let dy: CGFloat
+        if topDist < edgeBand {
+            dy = -maxStep * min(1, max(0, edgeBand - topDist) / edgeBand)
+        } else if botDist < edgeBand {
+            dy = maxStep * min(1, max(0, edgeBand - botDist) / edgeBand)
+        } else {
+            return
+        }
+        guard scrollBy(sv, dy) else { return }   // 실제로 이동했을 때만(문서 끝이면 no-op) 재계산
+        if var s = session {
+            s.translation = baseTranslation + scrollDelta
+            session = s
+        }
+    }
+
+    /// contentView 를 dy 만큼 민다(문서 범위로 clamp). 실제 이동하면 true.
+    @discardableResult
+    private func scrollBy(_ sv: NSScrollView, _ dy: CGFloat) -> Bool {
+        let clip = sv.contentView
+        guard let doc = sv.documentView else { return false }
+        let maxY = max(0, doc.frame.height - clip.bounds.height)
+        let cur = clip.bounds.origin.y
+        let newY = min(max(0, cur + dy), maxY)
+        guard abs(newY - cur) > 0.01 else { return false }
+        clip.scroll(to: CGPoint(x: clip.bounds.origin.x, y: newY))
+        sv.reflectScrolledClipView(clip)
+        return true
+    }
+}
+
+// SwiftUI ScrollView 뒤의 NSScrollView 참조를 잡아 컨트롤러에 넘긴다(드래그 edge 자동 스크롤용).
+// enclosingScrollView 는 정식 AppKit API — 임의 트리 순회가 아니다. 콘텐츠 서브트리에 심어야 resolve 된다.
+private struct ScrollViewGrabber: NSViewRepresentable {
+    let onResolve: (NSScrollView) -> Void
+    func makeNSView(context: Context) -> NSView { GrabberView(onResolve: onResolve) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class GrabberView: NSView {
+        let onResolve: (NSScrollView) -> Void
+        init(onResolve: @escaping (NSScrollView) -> Void) {
+            self.onResolve = onResolve
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) 미사용") }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let sv = enclosingScrollView { onResolve(sv) }
+        }
     }
 }
 

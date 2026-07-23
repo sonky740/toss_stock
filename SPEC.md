@@ -88,6 +88,7 @@
 - 보유종목 0건(`items` 빈 배열) → `보유종목 없음` (회색).
 
 - **드래그 재배치**: 행을 눌러 위아래로 끌어 놓으면 순서가 바뀌고 `holdings_order.txt`에 즉시 저장된다(§2.3). 놓는 순간 1회만(commit-on-end) 인메모리 행을 재정렬·영속화하므로 네트워크 재요청·10초 폴링과 충돌하지 않는다. 메뉴바 `.window`는 비활성 창이라 AppKit `NSDraggingSession`(SwiftUI `.draggable`)이 시작되지 않아 **수동 `DragGesture`(+`highPriorityGesture`)**로 구현한다 — 버튼 탭과 동일한 이벤트 스트림. macOS는 클릭-드래그로 스크롤하지 않아(휠/투핑거 사용) 스크롤과 충돌하지 않는다.
+  - **가장자리 자동 스크롤**: 목록이 뷰포트(최대 520px)를 넘칠 때, 드래그 중 포인터를 상/하단 가장자리(≈44px 밴드, 깊이 비례 속도)로 가져가면 목록이 자동으로 스크롤된다. 포인터가 멈춰 있어도 진행해야 하므로(→ `onChanged`가 안 불림) 독립 `Task.sleep` 루프가 몬다(Timer 금지, §4.1과 동일 이유). 스크롤 델타 `S`(= `NSScrollView.contentView.bounds.origin.y` 변화량)를 `DragGesture(.global)`의 translation 에 실시간 합산해(`유효 = base + S`) 떠 있는 행 위치와 드롭 타깃 인덱스를 정합한다 — 그래서 스크롤 중 재배치 가드(`scrollDisabled`)가 불필요하다. `NSScrollView` 참조는 콘텐츠 서브트리에 심은 뷰의 `enclosingScrollView`(정식 AppKit API)로 얻는다.
 
 ### 3.3 관심종목 섹션
 
