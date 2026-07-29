@@ -19,6 +19,16 @@ open build/TossStock.app                       # 메뉴바에 등록
 swift build                                    # 빠른 타입체크(debug). VSCode launch.json에 debug/release 구성 있음
 ```
 
+린트·포맷:
+
+```bash
+TOOLCHAIN_DIR=/Library/Developer/CommandLineTools swiftlint lint --strict   # 린트 (.swiftlint.yml)
+swift format lint --strict -r Sources                                       # 포맷 검사 (.swift-format)
+swift format -i Sources/TossStock/Format.swift                              # 포맷 자동 정리(파일 단위)
+```
+
+`TOOLCHAIN_DIR`이 필요한 이유 — 이 머신엔 Xcode 없이 Command Line Tools만 있어서 SwiftLint가 `sourcekitd`를 Xcode 레이아웃에서 찾다 크래시한다. 빼면 `Loading sourcekitdInProc.framework failed`로 죽는다. `swift format`은 툴체인 번들이라 이 변수가 필요 없고, 서드파티 SwiftFormat(nicklockwood, `.swiftformat`)과는 다른 도구다. **들여쓰기는 2칸**(swift-format 기본값 = Google·Airbnb 가이드 = apple/swift 저장소). 두 도구의 역할은 갈라 뒀다 — 포맷 계열은 swift-format이 담당하고 SwiftLint 쪽 대응 룰(`line_length`·`opening_brace` 등)은 꺼 뒀다. 같은 것을 다투면 고칠 수 없는 상태가 된다. 근거는 각 설정 파일 상단 주석.
+
 - **테스트 스위트 없음.** 데이터 레이어 검증은 `--dump` 헤드리스 실행이 유일한 수단이다 (네트워크·인증·디코딩 경로를 GUI 없이 통과시킨다).
 - 실행하려면 `~/.config/tossstock/auth.env`에 `TOSS_CLIENT_ID`/`TOSS_CLIENT_SECRET`가 있어야 한다 (레포 밖, `chmod 600`, README §설치 참고). 없으면 앱이 설정 안내 화면만 띄운다.
 

@@ -1,0 +1,100 @@
+# SwiftLint 설정 — TossStock
+#
+# ── 실행 (이 디렉토리에서) ────────────────────────────────────────────
+#   TOOLCHAIN_DIR=/Library/Developer/CommandLineTools swiftlint lint --strict
+#   TOOLCHAIN_DIR=/Library/Developer/CommandLineTools swiftlint lint --fix
+#
+# TOOLCHAIN_DIR 이 필요한 이유: 이 머신엔 Xcode 없이 Command Line Tools 만 있다.
+# SwiftLint 는 sourcekitd 를 Xcode 레이아웃에서 찾다가 크래시하므로 CLT 경로를 알려줘야 한다.
+# Xcode 를 설치하면 이 환경변수 없이도 동작한다.
+#
+# ── 룰 선정 근거 (2026-07-28 이 저장소 실측) ──────────────────────────
+# "지금 위반 0건이라 켜도 안 터지는 안전 룰"만 error 로 올렸다. 앞으로 생길 회귀만 막는다.
+# 포맷 계열(줄 길이·정렬·후행 쉼표)은 swift-format 이 담당하므로 여기선 껐다 — 두 도구가
+# 같은 것을 다투면 고칠 수 없는 상태가 된다.
+# 크기 계열은 끄지 않고 현재 최대치 위로 올려 뒀다: 지금은 통과하고 더 커지면 잡는다.
+
+included:
+  - Sources
+
+excluded:
+  - .build
+  - Packaging      # make-icon.swift 는 빌드 스크립트지 앱 코드가 아니다
+
+# ── 켜는 안전 룰 ──────────────────────────────────────────────────
+# opt_in_rules 는 SwiftLint 가 기본으로 꺼두는 룰이다. 여기 적어야 켜진다.
+opt_in_rules:
+  # 크래시를 만드는 것들 (컴파일러는 통과시킨다)
+  - force_unwrapping                        # 옵셔널 강제 언래핑 `x!`
+  - implicitly_unwrapped_optional           # `var x: Foo!` 선언
+  - unowned_variable_capture                # `[unowned self]` — 대상이 해제됐으면 크래시
+  # 누수를 만드는 것들 (아무 진단도 없다)
+  - weak_delegate                           # delegate 가 strong 이면 순환 참조
+  - discarded_notification_center_observer  # 옵저버 토큰을 버리면 해제할 수 없다
+  # 조용한 버그
+  - discouraged_optional_boolean            # `Bool?` 은 3-상태라 호출부마다 nil 해석이 갈린다
+  - implicit_optional_initialization        # `var x: Int? = nil` 의 `= nil` 은 중복
+                                            # (구 이름 redundant_optional_initialization — 개명됨)
+  # 성능·가독성
+  - empty_count                             # `count == 0` 대신 `isEmpty` (O(1) 보장)
+  - empty_string                            # `s == ""` 대신 `isEmpty`
+  - first_where                             # `filter{}.first` 는 전체를 순회한다
+  - last_where
+  - contains_over_first_not_nil
+  - toggle_bool                             # `x = !x` 대신 `x.toggle()`
+  - prefer_self_in_static_references        # 타입 내부에선 타입명 대신 `Self`
+
+# ── 끄는 룰 — swift-format 이 담당하는 영역 ─────────────────────────
+disabled_rules:
+  - line_length            # .swift-format 의 lineLength
+  - trailing_comma         # .swift-format 의 multiElementCollectionTrailingCommas
+  - statement_position
+  - switch_case_alignment
+  - opening_brace          # 긴 시그니처를 swift-format 이 줄바꿈하면 `{` 가 다음 줄로 내려간다.
+                           # 그걸 SwiftLint 가 되돌리면 두 도구가 무한히 다툰다 — 포매터에 양보.
+
+# ── 심각도: 크래시·누수 룰만 error ────────────────────────────────
+# (현재 전부 0건이므로 error 로 올려도 지금 빌드를 막지 않는다)
+force_cast: error
+force_try: error
+force_unwrapping:
+  severity: error
+implicitly_unwrapped_optional:
+  severity: error
+unowned_variable_capture:
+  severity: error
+weak_delegate:
+  severity: error
+
+# ── 크기 계열: 현재 최대치 위로 (증가 감시용) ──────────────────────
+# 실측 최대 — 파일 605줄(PopupView.swift). 임계값은 그 위로 여유를 둔 값이다.
+file_length:
+  warning: 1000
+  error: 1500
+type_body_length:
+  warning: 500
+  error: 700
+function_body_length:
+  warning: 60
+  error: 120
+function_parameter_count:
+  warning: 7
+  error: 10
+large_tuple:
+  warning: 3
+  error: 4
+
+# ── 이름 규칙 ─────────────────────────────────────────────────────
+# 기본값(최소 3자)은 Swift 관용인 짧은 클로저 파라미터(`a`, `b`, `x`, `k`, `v`)를
+# 전부 잡아 103건이 나온다. 1자를 허용하고, 서버 JSON 계약을 그대로 받는
+# snake_case 프로퍼티만 예외로 둔다.
+identifier_name:
+  min_length:
+    warning: 1
+    error: 1
+  excluded:
+    - access_token
+    - expires_at
+    - account_seq
+
+reporter: "xcode"
