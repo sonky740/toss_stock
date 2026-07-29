@@ -1,5 +1,5 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 // ─────────────────────────────────────────────────────────────
 // 진입점 + 앱 골격.
@@ -9,34 +9,34 @@ import AppKit
 // ─────────────────────────────────────────────────────────────
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
-    }
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    NSApp.setActivationPolicy(.accessory)
+  }
 }
 
 @main
 enum Entry {
-    static func main() {
-        // 헤드리스 데이터 레이어 검증 경로(GUI 미기동). 그 외엔 메뉴바 앱 기동.
-        if CommandLine.arguments.contains("--dump") {
-            Dump.runBlocking()
-            return
-        }
-        TossStockApp.main()
+  static func main() {
+    // 헤드리스 데이터 레이어 검증 경로(GUI 미기동). 그 외엔 메뉴바 앱 기동.
+    if CommandLine.arguments.contains("--dump") {
+      Dump.runBlocking()
+      return
     }
+    TossStockApp.main()
+  }
 }
 
 struct TossStockApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @State private var model = StockModel()
+  @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+  @State private var model = StockModel()
 
-    var body: some Scene {
-        MenuBarExtra {
-            PopupView(model: model)
-        } label: {
-            // 모노크롬 회전 타이틀. 컬러는 드롭다운에만.
-            Text(model.titleText)
-        }
-        .menuBarExtraStyle(.window)
+  var body: some Scene {
+    MenuBarExtra {
+      PopupView(model: model)
+    } label: {
+      // 모노크롬 회전 타이틀. 컬러는 드롭다운에만.
+      Text(model.titleText)
     }
+    .menuBarExtraStyle(.window)
+  }
 }
