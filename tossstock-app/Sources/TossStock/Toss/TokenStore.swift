@@ -27,9 +27,15 @@ enum TossAuthError: Error, Sendable {
 
 // token.json 스키마(셸 플러그인과 공유): expires_at=unix초(number), account_seq=string.
 private struct TokenCacheFile: Codable {
-  let access_token: String
-  let expires_at: Int
-  let account_seq: String?
+  let accessToken: String
+  let expiresAt: Int
+  let accountSeq: String?
+
+  enum CodingKeys: String, CodingKey {
+    case accessToken = "access_token"
+    case expiresAt = "expires_at"
+    case accountSeq = "account_seq"
+  }
 }
 
 actor TokenStore {
@@ -138,20 +144,20 @@ actor TokenStore {
   private static func loadCache(_ paths: ConfigPaths) -> CachedToken? {
     guard let data = try? Data(contentsOf: paths.tokenJSON),
       let file = try? JSONDecoder().decode(TokenCacheFile.self, from: data),
-      !file.access_token.isEmpty
+      !file.accessToken.isEmpty
     else { return nil }
-    let seq = file.account_seq.flatMap { Int($0) }
+    let seq = file.accountSeq.flatMap { Int($0) }
     return CachedToken(
-      accessToken: file.access_token,
-      expiresAt: Date(timeIntervalSince1970: TimeInterval(file.expires_at)),
+      accessToken: file.accessToken,
+      expiresAt: Date(timeIntervalSince1970: TimeInterval(file.expiresAt)),
       accountSeq: seq)
   }
 
   private func persist(_ token: CachedToken) {
     let file = TokenCacheFile(
-      access_token: token.accessToken,
-      expires_at: Int(token.expiresAt.timeIntervalSince1970),
-      account_seq: token.accountSeq.map(String.init)
+      accessToken: token.accessToken,
+      expiresAt: Int(token.expiresAt.timeIntervalSince1970),
+      accountSeq: token.accountSeq.map(String.init)
     )
     guard let data = try? JSONEncoder().encode(file) else { return }
     let url = config.tokenJSON
