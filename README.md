@@ -135,7 +135,7 @@ cd tossstock-app
 ├── assets/                # README 스크린샷 등 문서용 이미지
 └── tossstock-app/         # 네이티브 메뉴바 앱 (SwiftPM)
     ├── Package.swift
-    ├── Sources/TossStock/*.swift
+    ├── Sources/TossStock/  # 레이어별 폴더 구성 (SPEC.md §4.6)
     └── Packaging/{Info.plist, build.sh, deploy.sh}
 
 ~/.config/tossstock/auth.env      # client_id / client_secret (비밀, chmod 600)

@@ -186,15 +186,18 @@ tossstock-app/
 ├── Package.swift                  SwiftPM executableTarget, 의존성 0, Swift 6 모드
 ├── Sources/TossStock/
 │   ├── TossStockApp.swift         @main 진입(--dump 분기) + MenuBarExtra(.window) Scene + AppDelegate
-│   ├── StockModel.swift           @MainActor @Observable. 폴링 루프·회전·인증상태
-│   ├── PopupView.swift            드롭다운(보유/관심/관리/하단/설정안내) — 다크 'Color pill' 디자인
-│   ├── TossService.swift          도메인 메서드(positionRows/watchRows/authStatus) + Dump
-│   ├── TossAPI.swift              URLSession 요청계층(Bearer·계좌헤더·401/429 재시도) + TossHTTP
-│   ├── TossAuth.swift             actor TokenStore(토큰 캐시·in-flight·디스크 재확인) + ConfigPaths
-│   ├── Models.swift               DTO(수동 init + decimal) + 표시 Row 타입
-│   ├── Watchlist.swift            symbols.tsv 읽기/추가/삭제/순서저장 + 정제
-│   ├── HoldingsOrder.swift        holdings_order.txt 읽기/쓰기 + 저장 순서로 정렬(드래그 재배치)
-│   └── Format.swift               ₩/$/원/달러·등락·화살표 포맷(§3.7)
+│   ├── Format.swift               ₩/$/원/달러·등락·화살표 포맷(§3.7) — 전 레이어 공용
+│   ├── Popup/                     화면 레이어
+│   │   ├── PopupView.swift        드롭다운(보유/관심/관리/하단/설정안내) — 다크 'Color pill' 디자인
+│   │   └── StockModel.swift       @MainActor @Observable. 폴링 루프·회전·인증상태
+│   ├── Toss/                      토스 Open API 연동 레이어
+│   │   ├── TossService.swift      도메인 메서드(positionRows/watchRows/authStatus) + Dump
+│   │   ├── TossAPI.swift          URLSession 요청계층(Bearer·계좌헤더·401/429 재시도) + TossHTTP
+│   │   ├── TossAuth.swift         actor TokenStore(토큰 캐시·in-flight·디스크 재확인) + ConfigPaths
+│   │   └── Models.swift           DTO(수동 init + decimal) + 표시 Row 타입
+│   └── Storage/                   설정 파일 I/O 레이어(§2.3)
+│       ├── Watchlist.swift        symbols.tsv 읽기/추가/삭제/순서저장 + 정제
+│       └── HoldingsOrder.swift    holdings_order.txt 읽기/쓰기 + 저장 순서로 정렬(드래그 재배치)
 └── Packaging/
     ├── Info.plist                 LSUIElement, 번들 식별자, 앱 아이콘(CFBundleIconFile)
     ├── build.sh                   swift build → .app 조립(아이콘 포함) → ad-hoc codesign

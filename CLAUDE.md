@@ -27,14 +27,14 @@ swift build                                    # 빠른 타입체크(debug). VSC
 레이어 체인 — 위→아래로만 의존한다:
 
 ```
-PopupView.swift      뷰 (보유/관심/관리/하단/설정안내)
-  └ StockModel.swift @MainActor @Observable — 10초 폴링 루프·회전 인덱스·인증 상태 소유
-      └ TossService.swift  도메인 메서드(positionRows/watchRows/authStatus) + --dump
-          └ TossAPI.swift  URLSession 요청계층 (Bearer·계좌헤더·401/429 재시도)
-              └ TossAuth.swift  actor TokenStore (토큰 캐시·in-flight 공유·디스크 재확인) + ConfigPaths
-Models.swift  DTO(수동 init + decimal 헬퍼) + 표시 Row 타입
-Watchlist.swift / HoldingsOrder.swift  설정 파일(symbols.tsv / holdings_order.txt) I/O + 드래그 순서 저장
-Format.swift  ₩/$/원/달러·등락·화살표 포맷
+Popup/PopupView.swift      뷰 (보유/관심/관리/하단/설정안내)
+  └ Popup/StockModel.swift @MainActor @Observable — 10초 폴링 루프·회전 인덱스·인증 상태 소유
+      └ Toss/TossService.swift  도메인 메서드(positionRows/watchRows/authStatus) + --dump
+          └ Toss/TossAPI.swift  URLSession 요청계층 (Bearer·계좌헤더·401/429 재시도)
+              └ Toss/TossAuth.swift  actor TokenStore (토큰 캐시·in-flight 공유·디스크 재확인) + ConfigPaths
+Toss/Models.swift  DTO(수동 init + decimal 헬퍼) + 표시 Row 타입
+Storage/Watchlist.swift / Storage/HoldingsOrder.swift  설정 파일(symbols.tsv / holdings_order.txt) I/O + 드래그 순서 저장
+Format.swift  ₩/$/원/달러·등락·화살표 포맷 (전 레이어 공용)
 ```
 
 파일별 상세 책임은 SPEC.md §4.6, 각 동작은 §3에 있다.
@@ -43,7 +43,7 @@ Format.swift  ₩/$/원/달러·등락·화살표 포맷
 
 이것들은 "정리"하면 앱이 조용히 깨진다. 대부분 SPEC.md에 근거가 있다.
 
-- **`MenuBarExtra(.window)`는 의도적이다** (§4.1). NSMenu 드롭다운은 펼치면 런루프가 `.eventTracking`으로 바뀌어 타이머·redraw가 멈춘다. 그래서 폴링도 **`Task.sleep`이고 RunLoop `Timer`가 아니다** ([StockModel.swift:51](tossstock-app/Sources/TossStock/StockModel.swift#L51)). Timer로 바꾸면 팝업 펼친 채 갱신이 멈춘다.
+- **`MenuBarExtra(.window)`는 의도적이다** (§4.1). NSMenu 드롭다운은 펼치면 런루프가 `.eventTracking`으로 바뀌어 타이머·redraw가 멈춘다. 그래서 폴링도 **`Task.sleep`이고 RunLoop `Timer`가 아니다** ([StockModel.swift:51](tossstock-app/Sources/TossStock/Popup/StockModel.swift#L51)). Timer로 바꾸면 팝업 펼친 채 갱신이 멈춘다.
 - **토큰은 client당 1개** (§2.1, §4.4). 폴링마다 재발급 금지 — `TokenStore`가 캐시하고 만료 5분 전 선제 재발급, 401 시 디스크 재확인 후 1회 재발급. 같은 `client_id`를 다른 도구와 공유하면 서로 무효화한다.
 - **API의 모든 수치 필드는 문자열**(`"72000"`, `"-0.0418"`) (§4.3). 합성 `Decodable`의 `decode(Double.self)`가 깨지므로 DTO마다 수동 `init(from:)` + `decimal()` 헬퍼로 흡수한다. `currency`는 unknown 값을 흡수하는 관대한 enum(throw하면 holdings 통째 블랭크).
 - **통화는 native 그대로 표시**한다 (§5). holdings가 종목별 금액을 종목 통화로만 반환하므로 미국 보유종목의 현재가·평가손익은 **달러로 표시**한다(원화 환산 안 함).
