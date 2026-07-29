@@ -32,6 +32,8 @@ struct Reorderable: ViewModifier {
   let commit: (_ from: Int, _ to: Int) -> Void
 
   @State private var rowHeight: CGFloat = 44
+  @State private var hovering = false
+  @State private var handleHovering = false
 
   private var session: DragSession? { controller.session }
   private var isDragging: Bool { session?.section == section && session?.fromIndex == index }
@@ -50,27 +52,41 @@ struct Reorderable: ViewModifier {
           Color.clear.onChange(of: g.size.height, initial: true) { _, h in rowHeight = h }
         }
       )
+      .background(hoverFill)
       .background(
         (isDragging ? Palette.dragLift : isTarget ? Palette.dropHi : Color.clear),
         in: RoundedRectangle(cornerRadius: isDragging ? 8 : 0)
       )
+      .onHover { hovering = $0 }
       .scaleEffect(isDragging ? 1.03 : 1)
       .shadow(color: .black.opacity(isDragging ? 0.45 : 0), radius: isDragging ? 8 : 0, y: isDragging ? 3 : 0)
       .offset(y: isDragging ? (session?.translation ?? 0) : 0)
       .zIndex(isDragging ? 1 : 0)
   }
 
+  // hover 배경만 담은 레이어. 페이드 애니메이션을 이 서브트리에 가둬야 같은 트랜잭션의
+  // offset·scale(드래그 중 16ms마다 갱신)까지 이징되어 떠 있는 행이 포인터를 늦게 따라오는 일이 없다.
+  private var hoverFill: some View {
+    Palette.rowHover
+      .opacity(hovering && session == nil ? 1 : 0)
+      .animation(.easeOut(duration: 0.12), value: hovering)
+  }
+
   // 왼쪽 액센트 바 주변(28px) 투명 스트립만 드래그 트리거. 텍스트 영역은 드래그 안 됨.
-  // 호버 시 펼친 손, 끄는 중 쥔 손 커서로 그랩 영역을 알린다.
+  // 호버 시 스트립 배경 강조 + 펼친 손, 끄는 중 쥔 손 커서로 그랩 영역을 알린다.
   private var dragHandle: some View {
     Color.clear
       .frame(width: 28)
       .contentShape(Rectangle())
+      .background(Palette.handleHover.opacity(handleHovering && session == nil ? 1 : 0))
       .onContinuousHover { phase in
-        guard controller.session == nil else { return }  // 드래그 중엔 쥔 손(아래 gesture) 유지
         switch phase {
-        case .active: NSCursor.openHand.set()
-        case .ended: NSCursor.arrow.set()
+        case .active:
+          handleHovering = true
+          if session == nil { NSCursor.openHand.set() }  // 드래그 중엔 쥔 손(아래 gesture) 유지
+        case .ended:
+          handleHovering = false
+          if session == nil { NSCursor.arrow.set() }
         }
       }
       .highPriorityGesture(

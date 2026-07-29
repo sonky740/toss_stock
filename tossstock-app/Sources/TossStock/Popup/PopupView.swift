@@ -266,6 +266,8 @@ struct PopupView: View {
       .padding(.horizontal, 15).padding(.vertical, 5)
     }
     .buttonStyle(.plain)
+    .pointerCursor()
+    .modifier(RowHover())
 
     if manageExpanded {
       HStack(spacing: 6) {
@@ -281,6 +283,7 @@ struct PopupView: View {
             .background(Palette.addBtn, in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .disabled(newCode.trimmingCharacters(in: .whitespaces).isEmpty)
         .opacity(newCode.trimmingCharacters(in: .whitespaces).isEmpty ? 0.5 : 1)
       }
@@ -323,6 +326,7 @@ struct PopupView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .help("별칭 수정")
         codeTag(sym.code)
         circleIcon("xmark", bg: Palette.deleteBG) { model.removeWatch(code: sym.code) }
@@ -330,6 +334,7 @@ struct PopupView: View {
       }
     }
     .padding(.horizontal, 15).padding(.vertical, 6)
+    .modifier(RowHover())
   }
 
   private func codeTag(_ code: String) -> some View {
@@ -349,6 +354,7 @@ struct PopupView: View {
         .background(bg, in: Circle())
     }
     .buttonStyle(.plain)
+    .pointerCursor()
   }
 
   private func beginAliasEdit(_ sym: WatchSymbol) {
@@ -438,6 +444,7 @@ struct PopupView: View {
       Link("토스증권 Open API 발급 안내", destination: URL(string: "https://developers.tossinvest.com/docs")!)
         .font(.system(size: 12))
         .tint(Palette.indigo)
+        .pointerCursor()
       HStack {
         footerButton(title: "다시 확인") { model.checkAuth() }
         Spacer()
@@ -493,6 +500,7 @@ struct PopupView: View {
         in: RoundedRectangle(cornerRadius: 6))
     }
     .buttonStyle(.plain)
+    .pointerCursor()
   }
 
   private func darkField(_ placeholder: String, text: Binding<String>) -> some View {
@@ -591,8 +599,30 @@ private struct RowInteraction: ViewModifier {
   }
 }
 
+// 클릭 가능한 행(관심종목 관리) hover 배경. 재배치 행은 Reorderable 이 드래그 상태와 함께 다룬다.
+private struct RowHover: ViewModifier {
+  @State private var hovering = false
+
+  func body(content: Content) -> some View {
+    content
+      .background(Palette.rowHover.opacity(hovering ? 1 : 0).animation(.easeOut(duration: 0.12), value: hovering))
+      .onHover { hovering = $0 }
+  }
+}
+
 // 행 좌측 색 액센트 바(3px). 그리디 셰이프가 행 높이를 부풀리지 않도록 overlay로 그린다.
 extension View {
+  // .plain 버튼엔 커서가 안 붙는다. MenuBarExtra(.window)는 포인터 이동 시 OS가 커서를 리셋하므로
+  // .active 마다 재-set 한다(RowInteraction·dragHandle 과 동일 패턴).
+  fileprivate func pointerCursor() -> some View {
+    onContinuousHover { phase in
+      switch phase {
+      case .active: NSCursor.pointingHand.set()
+      case .ended: NSCursor.arrow.set()
+      }
+    }
+  }
+
   fileprivate func accentBar(_ color: Color) -> some View {
     overlay(alignment: .leading) {
       RoundedRectangle(cornerRadius: 1.5)

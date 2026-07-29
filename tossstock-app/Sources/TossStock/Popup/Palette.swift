@@ -39,6 +39,8 @@ enum Palette {
 
   static let dropHi = Color(hex: 0x818CF8, alpha: 0.16)  // 드롭 타깃 슬롯 하이라이트
   static let dragLift = Color(hex: 0x26262E)  // 들어올린 행(떠 있는 카드) 배경
+  static let rowHover = Color(hex: 0xFFFFFF, alpha: 0.05)  // 행 hover 배경
+  static let handleHover = Color(hex: 0xFFFFFF, alpha: 0.07)  // 드래그 핸들 스트립 hover
   static let tooltipBG = Color(hex: 0x2E2E38)  // 미국 종목 hover 커스텀 툴팁 배경
 }
 
