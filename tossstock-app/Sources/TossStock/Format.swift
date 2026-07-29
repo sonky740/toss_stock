@@ -7,7 +7,7 @@ import Foundation
 //   원화 등락 변화량엔 ₩ 없음(셸 동작), 달러 변화량엔 $ 있음.
 // ─────────────────────────────────────────────────────────────
 
-enum Fmt {
+enum Format {
     /// 정수 문자열에 1000단위 콤마(로케일 무관 강제 콤마).
     private static func group(_ digits: String) -> String {
         var out: [Character] = []

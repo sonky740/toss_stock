@@ -1,24 +1,12 @@
 import Foundation
 
 // ─────────────────────────────────────────────────────────────
-// TossAuth — OAuth2 토큰 관리.
+// TokenStore — OAuth2 토큰 관리.
 // 핵심 제약: client당 토큰 1개(재발급 시 이전 토큰 즉시 무효화 + AUTH rate limit).
 //   (a) 만료까지 캐시 재사용  (b) 만료 5분 전 선제 재발급(저장 시 반영)
 //   (c) 동시 다수 요청이 만료를 동시 감지해도 재발급 1회  (d) 401 시 단일 재발급
 // 토큰 저장 a안: 플러그인과 ~/.config/tossstock/token.json 캐시 공유(동일 스키마, atomic).
 // ─────────────────────────────────────────────────────────────
-
-struct ConfigPaths: Sendable {
-    let dir: URL
-    var authEnv: URL { dir.appendingPathComponent("auth.env") }
-    var tokenJSON: URL { dir.appendingPathComponent("token.json") }
-    var symbolsTSV: URL { dir.appendingPathComponent("symbols.tsv") }
-    var holdingsOrder: URL { dir.appendingPathComponent("holdings_order.txt") }  // 보유종목 드래그 재배치 순서
-
-    static let standard = ConfigPaths(
-        dir: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/tossstock")
-    )
-}
 
 struct Credentials: Sendable {
     let clientId: String

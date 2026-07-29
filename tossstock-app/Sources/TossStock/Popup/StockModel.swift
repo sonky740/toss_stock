@@ -218,7 +218,8 @@ final class StockModel {
                                      uniquingKeysWith: { a, _ in a })
             return rows.map { r in
                 let name = aliasBy[r.id] ?? r.name
-                return "\(name) \(Fmt.price(r.lastPrice, r.currency)) \(Fmt.pctSigned(r.ratePercent, r.direction))"
+                let pct = Format.pctSigned(r.ratePercent, r.direction)
+                return "\(name) \(Format.price(r.lastPrice, r.currency)) \(pct)"
             }
         }
         if case .loaded(let rows) = watch, !rows.isEmpty {
@@ -232,9 +233,9 @@ final class StockModel {
         case .lookupFailed:
             return "\(r.id) ⚠️"
         case .noPrevClose:
-            return "\(r.titleName) \(Fmt.price(r.lastPrice, r.currency))"
+            return "\(r.titleName) \(Format.price(r.lastPrice, r.currency))"
         case .priced(_, let rate, let dir):
-            return "\(r.titleName) \(Fmt.price(r.lastPrice, r.currency)) \(Fmt.arrow(dir))\(Fmt.pctAbs(rate))"
+            return "\(r.titleName) \(Format.price(r.lastPrice, r.currency)) \(Format.arrow(dir))\(Format.pctAbs(rate))"
         }
     }
 }

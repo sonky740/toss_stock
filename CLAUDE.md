@@ -27,14 +27,15 @@ swift build                                    # 빠른 타입체크(debug). VSC
 레이어 체인 — 위→아래로만 의존한다:
 
 ```
-Popup/PopupView.swift      뷰 (보유/관심/관리/하단/설정안내)
+Popup/PopupView.swift      뷰 (보유/관심/관리/하단/설정안내). 색 토큰은 Popup/Palette.swift
   └ Popup/StockModel.swift @MainActor @Observable — 10초 폴링 루프·회전 인덱스·인증 상태 소유
       └ Toss/TossService.swift  도메인 메서드(positionRows/watchRows/authStatus) + --dump
           └ Toss/TossAPI.swift  URLSession 요청계층 (Bearer·계좌헤더·401/429 재시도)
-              └ Toss/TossAuth.swift  actor TokenStore (토큰 캐시·in-flight 공유·디스크 재확인) + ConfigPaths
-Toss/Models.swift  DTO(수동 init + decimal 헬퍼) + 표시 Row 타입
+              └ Toss/TokenStore.swift  actor TokenStore (토큰 캐시·in-flight 공유·디스크 재확인)
+Popup/ReorderController.swift  드래그 재배치 세션 + edge 자동 스크롤 (뷰가 관찰)
+Toss/TossDTO.swift  API 응답 DTO(수동 init + decimal 헬퍼) / Toss/DisplayRow.swift  service → view 표시용 Row
 Storage/Watchlist.swift / Storage/HoldingsOrder.swift  설정 파일(symbols.tsv / holdings_order.txt) I/O + 드래그 순서 저장
-Format.swift  ₩/$/원/달러·등락·화살표 포맷 (전 레이어 공용)
+Format.swift / ConfigPaths.swift  전 레이어 공용 — 표시 포맷 · ~/.config/tossstock 경로
 ```
 
 파일별 상세 책임은 SPEC.md §4.6, 각 동작은 §3에 있다.

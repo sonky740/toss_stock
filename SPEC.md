@@ -155,7 +155,7 @@ NSMenu 드롭다운은 펼치면 런루프가 `.eventTracking` 모드로 전환�
 
 - **UI**: SwiftUI `MenuBarExtra(.window)`. `LSUIElement=true` + `setActivationPolicy(.accessory)`로 Dock 미표시. 모노크롬 회전 타이틀, 컬러는 드롭다운에만.
 - **폴링**: `Task { while: Task.sleep(10초) }`. RunLoop Timer 금지(`.eventTracking` 진입 시 멈춤). holdings·watch는 rate 그룹이 달라 `async let`로 off-actor 병렬.
-- **레이어**: `PopupView`(뷰) → `StockModel`(@MainActor @Observable, 폴링·회전 소유) → `TossService`/`TossAPI`(service) → `URLSession`(I/O). 토큰은 `TossAuth`(actor `TokenStore`)에 위임.
+- **레이어**: `PopupView`(뷰) → `StockModel`(@MainActor @Observable, 폴링·회전 소유) → `TossService`/`TossAPI`(service) → `URLSession`(I/O). 토큰은 actor `TokenStore`에 위임.
 - **빌드**: SwiftPM `executableTarget`(외부 의존성 0, Swift 6 모드). `Packaging/build.sh` → `.app` 조립 + ad-hoc codesign. `--dump` 인자로 GUI 없이 데이터 레이어 헤드리스 검증.
 - **App Sandbox OFF**: 토큰 저장(§4.4)이 `~/.config/tossstock` 접근을 요구 → 미샌드박스(entitlements 파일 없음). 미샌드박스 앱은 `network.client` 없이 네트워크 가능.
 - **레이아웃 주의**: `ScrollView`는 고유 높이가 0이라 self-sizing 윈도우(`MenuBarExtra .window`)에서 붕괴한다 → 콘텐츠 실측 높이로 ScrollView 높이를 고정(최대 520, 초과 시 스크롤).
@@ -187,14 +187,18 @@ tossstock-app/
 ├── Sources/TossStock/
 │   ├── TossStockApp.swift         @main 진입(--dump 분기) + MenuBarExtra(.window) Scene + AppDelegate
 │   ├── Format.swift               ₩/$/원/달러·등락·화살표 포맷(§3.7) — 전 레이어 공용
+│   ├── ConfigPaths.swift          ~/.config/tossstock 경로 묶음(§2.3) — 전 레이어 공용
 │   ├── Popup/                     화면 레이어
 │   │   ├── PopupView.swift        드롭다운(보유/관심/관리/하단/설정안내) — 다크 'Color pill' 디자인
-│   │   └── StockModel.swift       @MainActor @Observable. 폴링 루프·회전·인증상태
+│   │   ├── StockModel.swift       @MainActor @Observable. 폴링 루프·회전·인증상태
+│   │   ├── ReorderController.swift 드래그 재배치(DragSession·Reorderable·edge 자동 스크롤, §3.2)
+│   │   └── Palette.swift          다크 'Color pill' 색 토큰
 │   ├── Toss/                      토스 Open API 연동 레이어
 │   │   ├── TossService.swift      도메인 메서드(positionRows/watchRows/authStatus) + Dump
 │   │   ├── TossAPI.swift          URLSession 요청계층(Bearer·계좌헤더·401/429 재시도) + TossHTTP
-│   │   ├── TossAuth.swift         actor TokenStore(토큰 캐시·in-flight·디스크 재확인) + ConfigPaths
-│   │   └── Models.swift           DTO(수동 init + decimal) + 표시 Row 타입
+│   │   ├── TokenStore.swift       actor TokenStore(토큰 캐시·in-flight·디스크 재확인) + TossAuthError
+│   │   ├── TossDTO.swift          API 응답 DTO(수동 init + decimal 헬퍼)
+│   │   └── DisplayRow.swift       service → view 표시용 Row(PositionRow·WatchRow·Direction·AuthStatus)
 │   └── Storage/                   설정 파일 I/O 레이어(§2.3)
 │       ├── Watchlist.swift        symbols.tsv 읽기/추가/삭제/순서저장 + 정제
 │       └── HoldingsOrder.swift    holdings_order.txt 읽기/쓰기 + 저장 순서로 정렬(드래그 재배치)
