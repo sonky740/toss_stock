@@ -3,13 +3,23 @@ import Foundation
 // ─────────────────────────────────────────────────────────────
 // TossService — 도메인 메서드 + Row 매핑.
 //   positionRows: /holdings → 보유섹션(종목별 native 통화 손익)
-//   watchRows   : /prices(batch) + /stocks(batch) + /candles(종목당 1, 0.25s 페이싱)
+//   watchRows   : /prices(batch) + /stocks(batch) + /candles(전일종가, 종목당 세션당 1회)
 //                 → 관심섹션(현재가-전일종가 등락). prices 누락 코드는 줄단위 "조회실패" 격리.
 //   authStatus  : 앱 내 인증 점검(토큰 발급 + accounts 조회)
 // ─────────────────────────────────────────────────────────────
 
+/// 전일종가가 갈리는 단위. 세션 롤 시각이 시장마다 다르다(국내 09:00 KST / 미국 00:00 ET).
+enum Market: Sendable {
+  case kr, us
+
+  /// 시장 시계 — 이 종목의 최신 일봉 날짜가 곧 그 시장의 현재 세션일.
+  /// 유동성이 높아 세션이 열리는 즉시 봉이 생기고, 비거래일엔 생기지 않는다.
+  var clockSymbol: String { self == .us ? "SPY" : "005930" }
+}
+
 struct TossService: Sendable {
   let api: TossAPI
+  let prevCloses = PrevCloseStore()
 
   func positionRows() async throws -> [PositionRow] {
     let overview = try await api.get("/api/v1/holdings", needsAccount: true, as: HoldingsOverview.self)
@@ -40,8 +50,13 @@ struct TossService: Sendable {
     let priceBy = Dictionary(prices.map { ($0.symbol, $0) }, uniquingKeysWith: { a, _ in a })
     let nameBy = Dictionary(stocks.map { ($0.symbol, $0.name) }, uniquingKeysWith: { a, _ in a })
 
+    // 전일종가 캐시의 유효 범위 = 시장의 현재 세션일. 폴링마다 시장별 1회만 확인한다.
+    var sessionDays: [Market: String] = [:]
+    for market in Set(symbols.compactMap { priceBy[$0.code].map { Self.market($0.currency) } }) {
+      sessionDays[market] = await sessionDay(market)
+    }
+
     var rows: [WatchRow] = []
-    var firstCandle = true
     for sym in symbols {
       guard let price = priceBy[sym.code], let last = price.lastPrice else {
         rows.append(
@@ -53,10 +68,8 @@ struct TossService: Sendable {
       let resolved = nameBy[sym.code]
       let (row, title) = WatchRow.displayNames(code: sym.code, resolvedName: resolved, alias: sym.alias)
 
-      // candles(MARKET_DATA_CHART, limit 5/s): 연속 호출 사이 250ms 페이싱(앞 호출과만).
-      if !firstCandle { try? await Task.sleep(for: .milliseconds(250)) }
-      firstCandle = false
-      let prev = await prevClose(sym.code)
+      let market = Self.market(price.currency)
+      let prev = await prevClose(sym.code, market: market, sessionDay: sessionDays[market])
 
       let change: WatchChange
       if let prev, prev > 0 {
@@ -89,15 +102,80 @@ struct TossService: Sendable {
     return (seq, expiry)
   }
 
-  private func prevClose(_ code: String) async -> Double? {
+  /// 전일종가(등락 계산의 분모). 세션 안에서 불변이므로 종목당 세션당 1회만 조회한다.
+  /// `sessionDay`가 nil(시장 시계 조회 실패)이면 캐시하지 않는다 — 틀린 키로 저장하면 세션 내내 물고 간다.
+  private func prevClose(_ code: String, market: Market, sessionDay: String?) async -> Double? {
+    if let sessionDay, let cached = await prevCloses.cached(code, on: sessionDay) { return cached }
+
+    await prevCloses.paceCandleCall()
     guard
       let page = try? await api.get(
         "/api/v1/candles?symbol=\(code)&interval=1d&count=2",
         as: CandlePageResponse.self),
-      page.candles.count >= 2
-    else { return nil }  // 신규상장 등 count<2 인덱스 가드
-    return page.candles[1].closePrice
+      let latest = page.candles.first
+    else { return nil }
+
+    // 봉은 체결이 있어야 생긴다 → 현 세션에 아직 안 뛴 종목은 최신 봉이 곧 전일종가다.
+    // 무조건 candles[1]로 고정하면 09:05에 미거래인 종목이 두 세션 전 종가를 세션 내내 분모로 쓴다.
+    let previous: Candle
+    if let sessionDay, latest.day != sessionDay {
+      previous = latest
+    } else {
+      guard page.candles.count >= 2 else { return nil }  // 신규상장 등 count<2 인덱스 가드
+      previous = page.candles[1]
+    }
+
+    // 국내는 일봉 종가가 NXT 시간외(~20:00) 마감가라 정규장 기준가와 다르다 — 실측(005930,
+    // 2026-07-30): 일봉 213,500 vs 정규장 207,000. 토스 앱·웹 등락률은 정규장 기준가를 쓴다.
+    var value = previous.closePrice
+    var cacheable = true
+    if market == .kr {
+      switch await regularClose(code, on: previous.day) {
+      case .value(let regular): value = regular
+      case .absent: break  // 정규장 봉 자체가 없다(거래정지 등) → 일봉 종가가 유일한 대안, 캐시해도 된다
+      case .failed: cacheable = false  // 일시 실패 → 시간외 값(최대 3.8%p 오차)을 세션 내내 굳히지 않는다
+      }
+    }
+    guard let value else { return nil }
+    if let sessionDay, cacheable { await prevCloses.store(value, for: code, on: sessionDay) }
+    return value
   }
+
+  /// 시장의 현재 세션일. clock 종목의 최신 일봉 날짜를 그대로 쓴다 — 종목 일봉과 같은 stamp
+  /// 공간이라 DST·휴장·반휴장을 계산할 필요가 없고, 벽시계 날짜와 달리 롤 시각이 저절로 맞는다.
+  private func sessionDay(_ market: Market) async -> String? {
+    await prevCloses.paceCandleCall()
+    let page = try? await api.get(
+      "/api/v1/candles?symbol=\(market.clockSymbol)&interval=1d&count=1",
+      as: CandlePageResponse.self)
+    return page?.candles.first?.day
+  }
+
+  /// 국내 정규장(15:30) 마감 체결가. `day`는 대상 거래일(`yyyy-MM-dd`, KST).
+  /// 조회 실패(`failed`)와 봉 부재(`absent`)를 가른다 — 전자는 재시도해야 하고 후자는 확정이다.
+  ///
+  /// 그 날 정규장 봉이 없으면 API가 **직전 거래일의 시간외 봉**을 대신 준다(실측: 비거래일
+  /// 2026-07-17 조회 → 07-16T20:00 봉). 그게 바로 이 메서드가 피하려는 값이라 날짜로 걸러낸다.
+  private func regularClose(_ code: String, on day: String) async -> RegularClose {
+    await prevCloses.paceCandleCall()
+    // 15:32 KST = 같은 날 06:32Z. 그 이전 최신 1분봉 = 정규장 마감 체결(대개 15:31 동시호가).
+    guard
+      let page = try? await api.get(
+        "/api/v1/candles?symbol=\(code)&interval=1m&count=1&before=\(day)T06:32:00Z",
+        as: CandlePageResponse.self)
+    else { return .failed }
+    guard let bar = page.candles.first, bar.day == day, let close = bar.closePrice else { return .absent }
+    return .value(close)
+  }
+
+  private enum RegularClose {
+    case value(Double)
+    case absent
+    case failed
+  }
+
+  /// 전일종가 경로를 가르는 단일 술어 — 세션일 조회와 정규장 보정이 갈라지지 않게 한 곳에 둔다.
+  private static func market(_ currency: Currency) -> Market { currency.isUSD ? .us : .kr }
 
   private static func clean(_ s: String) -> String {
     String(s.filter { $0 != "\t" && $0 != "\n" && $0 != "|" })

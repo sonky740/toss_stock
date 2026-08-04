@@ -99,16 +99,22 @@ struct StockInfo: Decodable, Sendable {
   let name: String  // 한글 종목명
 }
 
-// /candles?interval=1d&count=2 — candles[0]=오늘, candles[1]=전일종가
+// /candles — 최신 봉부터 역순. interval=1d 면 candles[0]=오늘, candles[1]=직전 거래일.
 struct CandlePageResponse: Decodable, Sendable {
   let candles: [Candle]
 }
 
 struct Candle: Decodable, Sendable {
+  let timestamp: String  // "2026-07-31T00:00:00.000+09:00" — 봉 시작. 국내 일봉은 KST 자정.
   let closePrice: Double?
-  enum CodingKeys: String, CodingKey { case closePrice }
+
+  /// 봉 날짜(`yyyy-MM-dd`). 국내 일봉 timestamp가 KST 자정이라 앞 10자가 곧 거래일이다.
+  var day: String { String(timestamp.prefix(10)) }
+
+  enum CodingKeys: String, CodingKey { case timestamp, closePrice }
   init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
+    timestamp = try c.decode(String.self, forKey: .timestamp)
     closePrice = c.decimal(.closePrice)
   }
 }

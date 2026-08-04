@@ -38,7 +38,9 @@
 | `GET /api/v1/holdings` | 보유종목 | Bearer + 계좌헤더 | `items[].{symbol,name,marketCountry,currency,lastPrice,profitLoss.rate,profitLoss.amount}` |
 | `GET /api/v1/prices?symbols=a,b,c` | 관심종목 현재가(batch) | Bearer | `result[].{symbol,lastPrice,currency}` |
 | `GET /api/v1/stocks?symbols=a,b,c` | 관심종목 종목명(batch) | Bearer | `result[].{symbol,name}` |
-| `GET /api/v1/candles?symbol=X&interval=1d&count=2` | 전일종가(종목당 1회) | Bearer | `result.candles[1].closePrice` |
+| `GET /api/v1/candles?symbol=<clock>&interval=1d&count=1` | 시장 세션일 확인(시장당 폴링 1회) | Bearer | `result.candles[0].timestamp` |
+| `GET /api/v1/candles?symbol=X&interval=1d&count=2` | 직전 거래일 식별(종목당 세션당 1회) | Bearer | `result.candles[0..1].{timestamp,closePrice}` |
+| `GET /api/v1/candles?symbol=X&interval=1m&count=1&before=<거래일>T06:32:00Z` | 국내 전일 정규장 종가(종목당 세션당 1회) | Bearer | `result.candles[0].closePrice` |
 
 > **수치 필드는 모두 문자열이다** (`"72000"`, `"-0.0418"`). 합성 Decodable이 `decode(Double.self)`로 깨지므로 수동 디코딩으로 흡수한다(§4.3).
 >
@@ -101,8 +103,13 @@
 
 - **현재가**: `/prices`(batch 1회)의 `lastPrice`. 통화 인식: `currency=="USD"` → $, 그 외 → ₩.
 - **표시명**: `/stocks`(batch 1회)의 `name`에 별칭이 있으면 `종목명 · 별칭`으로 병기한다. 별칭이 없으면 종목명, 종목명 조회 실패 시 별칭 > 코드 순으로 폴백한다(§3.4 관리 표시명과 동일 규칙). 단, 조회실패 행은 코드만 표시한다(아래).
-- **등락**: 전일종가 = `/candles?interval=1d&count=2`의 **두 번째 봉** `closePrice`(직전 세션 종가). 등락액 = `현재가 − 전일종가`, 등락률 = `등락액 / 전일종가`.
-  - candles는 종목당 1회 호출하며 `MARKET_DATA_CHART`(초당 5회) 제한이 있어 **호출 간 0.25초** 간격을 둔다.
+- **등락**: 등락액 = `현재가 − 전일종가`, 등락률 = `등락액 / 전일종가`. 전일종가는 **토스 앱·웹과 같은 기준가(직전 거래일 정규장 종가)** 를 쓴다 — 통화별로 구하는 경로가 다르다.
+  - **국내(KRW)**: 일봉 종가를 쓸 수 없다. 국내 일봉 `closePrice`는 **NXT 시간외(~20:00) 마감가**여서 정규장 기준가와 어긋난다(실측 005930 2026-07-30: 일봉 213,500 vs 정규장 207,000 → 등락률이 3.8%p 틀어졌다). 그래서 ① `interval=1d&count=2`의 기준 봉(아래 날짜 비교 규칙) `timestamp`로 직전 거래일을 얻고(주말·휴일 자동 처리) ② 그 거래일의 `interval=1m&count=1&before=<거래일>T06:32:00Z`(= 15:32 KST 직전 최신 1분봉 = 대개 15:31 동시호가 체결)의 `closePrice`를 기준가로 쓴다. NXT 시간외 유동성이 없는 종목(ETF 등)은 두 값이 같다. ②의 정규장 봉이 **아예 없으면**(거래정지 등) 일봉 종가로 내려앉되(시간외만큼 어긋나지만 유일한 대안) 그 값은 캐시한다. 반면 ②의 **조회가 실패**했을 뿐이면 캐시하지 않고 다음 폴링에 재시도한다 — 캐시하면 시간외 기준가(최대 3.8%p 오차)가 세션 내내 굳는다.
+  - **미국(USD·기타)**: 일봉 `closePrice`가 정규장 종가다(애프터마켓 미포함) → 그대로 쓴다. `/price-limits`도 미국은 `null`이라 역산 경로가 없다.
+  - **분자는 정규장 종가가 아니라 `/prices`의 실시간 `lastPrice`** 다. 시간외에는 토스 앱도 같은 조합(시간외 실시간가 ÷ 정규장 기준가)을 보여준다.
+  - **기준 봉은 인덱스가 아니라 날짜로 고른다.** 일봉은 체결이 있어야 생기므로 현 세션에 아직 체결이 없는 종목은 `candles[0]`이 이미 직전 거래일이다 → `candles[0].timestamp`가 세션일이면 `candles[1]`, 아니면 `candles[0]`이 기준 봉이다. 무조건 `candles[1]`을 쓰면 09:05에 미거래인 종목이 **두 세션 전** 종가를 세션 내내 분모로 물고 간다.
+  - **캐시 키는 벽시계 날짜가 아니라 시장 세션일**이다. 전일종가가 갈리는 경계는 자정이 아니라 09:00 KST(국내)·00:00 ET(미국, 일봉 stamp `T13:00+09:00`)여서, KST 날짜를 키로 쓰면 롤 전에 채운 값이 세션 내내 남는다(실측 2026-08-04: 13:00 KST 이전에 캐시된 NVDA 기준가가 200.75로 굳어 정답 206.64 대비 +2.9%p 어긋남 — 앱을 껐다 켜야 맞았다). 세션일은 **시장 시계 종목**(국내 `005930` / 미국 `SPY`)의 최신 일봉 날짜로 폴링마다 확인한다. 종목 일봉과 같은 stamp 공간이라 DST·휴장·반휴장 계산이 필요 없고, 비거래일엔 새 봉이 없어 직전 거래일 등락이 그대로 유지된다. 시장 시계 조회가 실패하면 그 폴링은 `candles[1]`로 계산하되 **캐시하지 않는다**(틀린 키로 저장하면 세션 내내 굳는다).
+  - 전일종가는 세션 안에서 불변이라 **종목당 세션당 1회만** 조회한다(`PrevCloseStore`). `MARKET_DATA_CHART`(초당 5회) 제한 때문에 candles 호출 사이에 **0.25초** 간격을 둔다.
 - **방향**: 등락액 > 0 → ▲ 빨강, < 0 → ▼ 파랑, = 0 → ▬ 회색 (토스증권 규약). 등락률·등락액은 절댓값 + 화살표로 표시.
 - **상태별 표시**:
   - `/prices`에 코드가 없음(오타/상폐/인증) → `<코드>  조회실패 (코드/인증 확인)` (회색), 메뉴바 폴백 타이틀 `<코드> ⚠️`.
@@ -164,7 +171,7 @@ NSMenu 드롭다운은 펼치면 런루프가 `.eventTracking` 모드로 전환�
 
 - 모든 금액/수량 JSON 필드는 **문자열** → 합성 Decodable이 `decode(Double.self)`로 깨진다. 금액 보유 DTO마다 수동 `init(from:)` + `decimal()` 헬퍼(문자열·숫자·null·키누락·빈문자열 전부 nil/값, 크래시 0).
 - `currency`는 **관대한 enum**(unknown 값 흡수). 중첩 디코드라 throw하면 holdings 통째 블랭크가 되기 때문.
-- candles: `candles[0]`=당일, `candles[1]`=전일종가. `count < 2` 가드(신규상장 인덱스 크래시 방지).
+- candles: **최신 봉부터 역순**. `interval=1d`면 `candles[0]`=당일(진행 중), `candles[1]`=직전 거래일. `count < 2` 가드(신규상장 인덱스 크래시 방지). 국내 일봉 `timestamp`는 KST 자정이라 앞 10자가 곧 거래일(`Candle.day`). 국내 일봉 종가를 그대로 전일종가로 쓰면 안 되는 이유는 §3.3.
 
 ### 4.4 토큰 저장
 
@@ -197,6 +204,7 @@ tossstock-app/
 │   │   ├── TossService.swift      도메인 메서드(positionRows/watchRows/authStatus) + Dump
 │   │   ├── TossAPI.swift          URLSession 요청계층(Bearer·계좌헤더·401/429 재시도) + TossHTTP
 │   │   ├── TokenStore.swift       actor TokenStore(토큰 캐시·in-flight·디스크 재확인) + TossAuthError
+│   │   ├── PrevCloseStore.swift   actor. 전일종가 세션별 캐시 + candles 호출 페이싱(§3.3)
 │   │   ├── TossDTO.swift          API 응답 DTO(수동 init + decimal 헬퍼)
 │   │   └── DisplayRow.swift       service → view 표시용 Row(PositionRow·WatchRow·Direction·AuthStatus)
 │   └── Storage/                   설정 파일 I/O 레이어(§2.3)
@@ -218,5 +226,5 @@ tossstock-app/
 - **인증 필수**: 유효한 토스 Open API 자격증명(`auth.env`)이 있어야 한다. 없으면 설정 안내 화면을 표시한다.
 - **토큰 단일성**: client당 유효 토큰 1개 — 재발급 시 이전 토큰 즉시 무효화. **같은 `client_id`를 쓰는 다른 도구**가 동시에 토큰을 발급하면 서로 무효화한다. 그 경우 한 번의 새로고침이 일시적으로 실패로 렌더될 수 있으나 다음 새로고침에서 자동 복구된다. → 구조적 해법은 **도구별로 다른 `client_id` 발급**이다.
 - **통화 표시 (핵심 비자명 동작)**: holdings는 종목별 금액을 **native 통화**로만 반환한다(미국 종목의 원화 환산값은 종목별로 제공되지 않고 전체 합산에만 존재). 따라서 미국 보유종목의 현재가·평가손익은 **달러로 표시**한다.
-- **관심종목 등락 = candles 의존**: 등락 계산에 종목당 일봉 1회 호출이 필요하다. 관심종목 N개면 새로고침마다 candles N회(+0.25초 간격 throttle)가 발생해 렌더에 약 `N×0.25초`가 더 든다. `MARKET_DATA_CHART`(초당 5회) 제한 때문이다.
+- **관심종목 등락 = candles 의존**: 전일종가 조회에 candles 호출이 필요하다(국내 2회 + 미국 1회, §3.3). `MARKET_DATA_CHART`(초당 5회) 제한 때문에 호출 간 0.25초를 두므로 **거래일 첫 새로고침**만 `(국내×2 + 미국)×0.25초` + 429 재시도가 든다(국내 11 + 미국 6 실측 ≈12초, 폴링 주기 10초보다 길지만 `refresh()`가 순차라 겹치지 않는다). 그 뒤 폴링은 캐시 히트라 `/prices`·`/stocks`·`/holdings` 배치 호출만 남는다(실측 0.1초). 자정(KST)이 지나면 캐시가 만료돼 다시 한 번 든다.
 - **새로고침 주기**: 폴링 간격 10초(코드 상수). `RunLoop` Timer가 아닌 `Task.sleep`이라 팝업을 펼친 채로도 동작한다.

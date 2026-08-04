@@ -41,7 +41,8 @@ Popup/PopupView.swift      뷰 (보유/관심/관리/하단/설정안내). 색 �
   └ Popup/StockModel.swift @MainActor @Observable — 10초 폴링 루프·회전 인덱스·인증 상태 소유
       └ Toss/TossService.swift  도메인 메서드(positionRows/watchRows/authStatus) + --dump
           └ Toss/TossAPI.swift  URLSession 요청계층 (Bearer·계좌헤더·401/429 재시도)
-              └ Toss/TokenStore.swift  actor TokenStore (토큰 캐시·in-flight 공유·디스크 재확인)
+                ├ Toss/TokenStore.swift  actor TokenStore (토큰 캐시·in-flight 공유·디스크 재확인)
+              └ Toss/PrevCloseStore.swift  actor (전일종가 세션별 캐시 + candles 0.25초 페이싱)
 Popup/ReorderController.swift  드래그 재배치 세션 + edge 자동 스크롤 (뷰가 관찰)
 Toss/TossDTO.swift  API 응답 DTO(수동 init + decimal 헬퍼) / Toss/DisplayRow.swift  service → view 표시용 Row
 Storage/Watchlist.swift / Storage/HoldingsOrder.swift  설정 파일(symbols.tsv / holdings_order.txt) I/O + 드래그 순서 저장
@@ -62,7 +63,9 @@ Format.swift / ConfigPaths.swift  전 레이어 공용 — 표시 포맷 · ~/.c
 - **드래그 재배치는 수동 `DragGesture`** (§3.2). 메뉴바 `.window`는 비활성 창이라 SwiftUI `.draggable`(AppKit `NSDraggingSession`)이 시작되지 않는다. commit-on-end로 놓는 순간 1회만 재정렬·영속화해 10초 폴링과 충돌하지 않는다.
 - **App Sandbox OFF** (§4.2). 토큰 저장이 `~/.config/tossstock` 접근을 요구 → entitlements 파일 없음. 미샌드박스 앱은 `network.client` 없이 네트워크 가능. 서명은 ad-hoc(`codesign --sign -`).
 - **ScrollView 높이 붕괴 주의** (§4.2). self-sizing 윈도우에서 `ScrollView` 고유 높이가 0이라 콘텐츠 실측 높이로 고정한다(최대 520).
-- **candles throttle**: 관심종목 등락은 종목당 일봉 1회 호출이며 `MARKET_DATA_CHART`(초당 5회) 제한 때문에 호출 간 0.25초 간격을 둔다 (§3.3).
+- **국내 일봉 종가 ≠ 전일 기준가** (§3.3). 국내 종목의 일봉 `closePrice`는 **NXT 시간외(~20:00) 마감가**라서 토스 앱·웹이 쓰는 정규장 기준가와 다르다(실측 005930 2026-07-30: 213,500 vs 207,000). 그래서 국내는 일봉 `timestamp`로 직전 거래일을 얻고 그 날 **15:31 1분봉**(`before=<거래일>T06:32:00Z`)의 종가를 기준가로 쓴다. 미국은 일봉 종가가 정규장 종가라 그대로 쓴다 — 이 분기를 없애면 국내 등락률이 몇 %p 틀어진다. 현재가 쪽은 시간외에도 `/prices` 실시간가를 쓴다(토스와 동일 조합).
+- **candles throttle + 세션별 캐시**: 전일종가는 세션 안에서 불변이라 종목당 세션당 1회만 조회한다(`PrevCloseStore`). `MARKET_DATA_CHART`(초당 5회) 제한 때문에 호출 간 0.25초 간격을 둔다 — 폴링마다 재조회하도록 되돌리면 10초 주기와 충돌한다 (§3.3).
+- **캐시 키를 KST 날짜로 되돌리지 말 것** (§3.3). 기준가가 갈리는 경계는 자정이 아니라 09:00 KST·00:00 ET(미국 일봉 stamp `T13:00+09:00`)다. 날짜 키를 쓰면 롤 이전에 채운 값이 세션 내내 남아 등락률이 한 세션 어긋나고, **앱을 재시작해야만** 맞는다. 그래서 키는 시장 시계 종목(`005930`/`SPY`)의 최신 일봉 날짜이고, 기준 봉도 인덱스가 아니라 날짜 비교로 고른다(현 세션 미거래 종목은 `candles[0]`이 곧 기준 봉).
 
 ## 런타임 설정 파일 (레포 밖, 런타임 생성)
 
