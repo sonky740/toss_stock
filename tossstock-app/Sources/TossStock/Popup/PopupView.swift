@@ -5,33 +5,31 @@ import SwiftUI
 // PopupView — 펼친 채 실시간 갱신되는 드롭다운 (다크 "Color pill" 리디자인, Claude Design 02안).
 //   섹션마다 아이콘 배지 헤더 + 행별 색 액센트 바 + 등락률 색 배지(pill).
 //   상승 초록(#34d399) / 하락 빨강(#f87171) / 보합·실패 회색(앱 색 규칙 유지).
-//   보유 → 관심 → 관심종목 관리(인라인 추가/삭제) → 하단(새로고침·인증 점검·종료).
+//   관심종목 관리 진입(상단 고정) → 보유 → 관심 → 하단(새로고침·인증 점검·종료).
+//   관리 자체는 별도 창이다(Popup/ManageView.swift).
 //   자격증명 미설정이면 설정 안내만 표시. 폰트는 시스템 + 숫자만 monospaced.
 // ─────────────────────────────────────────────────────────────
 
 struct PopupView: View {
   let model: StockModel
-  @State private var searchQuery = ""
   @State private var contentHeight: CGFloat = 0
-  @State private var manageExpanded = false
   @State private var reorder = ReorderController()  // 드래그 재배치 세션 + edge 자동 스크롤(섹션 공유)
-  @State private var editingCode: String?  // 별칭 인라인 편집 중인 행(코드). nil = 편집 없음
-  @State private var editingAlias = ""
   @State private var tooltip: (text: String, point: CGPoint)?  // 미국 종목 hover 툴팁(popup 좌표). 최상위 overlay 렌더.
-  @FocusState private var aliasFieldFocused: Bool
+  @State private var manageOpen = false
+  @State private var manageSide: PopupSide = .right
 
   var body: some View {
     Group {
       if model.needsCredentials {
-        setupGuidance
+        setupGuidance.frame(width: 360)
       } else {
         main
       }
     }
-    .frame(width: 360)
     .background { Palette.bg.ignoresSafeArea() }
     .environment(\.colorScheme, .dark)
     .coordinateSpace(.named("popup"))
+    .background(PopupPanelGrabber())  // 관리 컬럼을 어느 쪽에 붙일지 정하기 위한 앵커 등록(§3.4)
     .overlay { tooltipOverlay }  // 행이 아닌 최상위에 그려 z-index 최상위 + ScrollView clip 회피
     .onDisappear { reorder.cancel() }  // 팝업 닫힘 등 onEnded 없이 중단 시 tick 루프 종료
   }
@@ -58,15 +56,34 @@ struct PopupView: View {
     tooltip = text.map { ($0, point) }
   }
 
+  // 관리는 별도 창이 아니라 이 패널이 가로로 넓어지는 형태다. 붙는 쪽은 화면 남는 폭이 정한다(§3.4).
   private var main: some View {
+    // .top 이어야 한다. 기본 .center 면 본체보다 짧은 관리 컬럼이 세로 가운데로 밀려 위아래에 여백이 생긴다.
+    HStack(alignment: .top, spacing: 0) {
+      if manageOpen && manageSide == .left {
+        ManagePane(model: model, height: scrollHeight)
+        vHairline
+      }
+      mainColumn
+      if manageOpen && manageSide == .right {
+        vHairline
+        ManagePane(model: model, height: scrollHeight)
+      }
+    }
+  }
+
+  /// 두 컬럼이 같은 높이로 서게 스크롤 높이를 한 곳에서 정한다.
+  private var scrollHeight: CGFloat { min(max(contentHeight, 60), 520) }
+
+  private var mainColumn: some View {
     VStack(alignment: .leading, spacing: 0) {
+      manageEntry  // ScrollView 밖 — 목록이 길어져도 스크롤에 밀려나지 않는다
+      hairline
       ScrollView {
         VStack(alignment: .leading, spacing: 0) {
           holdingsSection
           sectionDivider
           watchSection
-          sectionDivider
-          manageSection
         }
         .padding(.bottom, 8)
         // ScrollView는 고유 높이가 0 → self-sizing 윈도우(MenuBarExtra .window)에서 붕괴.
@@ -81,7 +98,7 @@ struct PopupView: View {
         // 콘텐츠 서브트리에 심어 뒤의 NSScrollView 참조를 잡는다(드래그 edge 자동 스크롤용).
         .background(ScrollViewGrabber { reorder.attach($0) })
       }
-      .frame(height: min(max(contentHeight, 60), 520))
+      .frame(height: scrollHeight)
       // 뷰포트(스크롤 안 되는 바깥 프레임)의 글로벌 위치 → 드래그 중 edge 밴드 판정 기준.
       .background(
         GeometryReader { proxy in
@@ -94,6 +111,44 @@ struct PopupView: View {
       hairline  // 하단 풀폭 구분선
       footer
     }
+    .frame(width: 360)
+  }
+
+  // ── 관심종목 관리 열기/닫기 (옆 컬럼) ──
+  private var manageEntry: some View {
+    Button(action: toggleManage) {
+      HStack(spacing: 9) {
+        iconBadge(bg: Palette.manageBG, symbol: "slider.horizontal.3", tint: Palette.manageTint)
+        Text("종목 검색·관리")
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(Palette.textPrimary)
+        // 보유("매입가 대비")·관심("당일 등락")과 같은 결로 상태를 말한다 — 동작 나열은 기능이 늘 때마다 낡는다.
+        Text(model.watchSymbols.isEmpty ? "등록된 종목 없음" : "\(model.watchSymbols.count)개 등록됨")
+          .font(.system(size: 11))
+          .foregroundStyle(Palette.textSecondary)
+        Spacer()
+        Image(systemName: manageSide == .left ? "sidebar.left" : "sidebar.right")
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(manageOpen ? Palette.manageTint : Palette.priceMono)
+      }
+      .padding(.horizontal, 15)
+      .frame(height: popupHeaderHeight)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .pointerCursor()
+    .modifier(RowHover())
+    .help(manageOpen ? "관리 영역 닫기" : "옆에 관리 영역 펼치기")
+  }
+
+  private func toggleManage() {
+    if !manageOpen {
+      // 펼칠 때만 방향을 정한다 — 접는 중에 바뀌면 컬럼이 반대편으로 튀었다가 사라진다.
+      manageSide = PopupAnchor.side(paneWidth: ManagePane.width)
+      // 유니버스 콜드 수집이 8초라 관리를 안 여는 세션에서는 시작조차 하지 않는다.
+      model.prepareSearch()
+    }
+    manageOpen.toggle()
   }
 
   // ── 보유종목 ──
@@ -241,110 +296,6 @@ struct PopupView: View {
     .modifier(RowInteraction(onTap: onTap, help: help, report: setTooltip))
   }
 
-  // ── 관심종목 관리 (인라인 추가/삭제) ──
-  @ViewBuilder private var manageSection: some View {
-    // 헤더 전체(화살표+배지+텍스트)를 클릭 가능하게 — DisclosureGroup은 chevron만 히트되는 문제 회피.
-    Button {
-      manageExpanded.toggle()
-      // 유니버스 콜드 수집이 8초라 검색을 안 쓰는 세션에서는 시작조차 하지 않는다.
-      if manageExpanded { model.prepareSearch() }
-    } label: {
-      HStack(spacing: 9) {
-        Image(systemName: "chevron.right")
-          .font(.system(size: 10, weight: .bold))
-          .foregroundStyle(Palette.priceMono)
-          .rotationEffect(.degrees(manageExpanded ? 90 : 0))
-        iconBadge(bg: Palette.manageBG, symbol: "slider.horizontal.3", tint: Palette.manageTint)
-        Text("관심종목 관리")
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundStyle(Palette.textPrimary)
-        // 보유("매입가 대비")·관심("당일 등락")과 같은 결로 상태를 말한다 — 동작 나열은 기능이 늘 때마다 낡는다.
-        Text(model.watchSymbols.isEmpty ? "등록된 종목 없음" : "\(model.watchSymbols.count)개 등록됨")
-          .font(.system(size: 11))
-          .foregroundStyle(Palette.textSecondary)
-        Spacer()
-      }
-      .contentShape(Rectangle())
-      .padding(.horizontal, 15).padding(.vertical, 5)
-    }
-    .buttonStyle(.plain)
-    .pointerCursor()
-    .modifier(RowHover())
-
-    if manageExpanded {
-      SearchSection(model: model, query: $searchQuery)
-
-      ForEach(model.watchSymbols) { sym in manageRow(sym) }
-    }
-  }
-
-  @ViewBuilder private func manageRow(_ sym: WatchSymbol) -> some View {
-    HStack(spacing: 8) {
-      if editingCode == sym.code {
-        // 별칭 인라인 편집 — 표시명 자리에 TextField. ✓/Enter 저장, ✗ 취소.
-        TextField("별칭(비우면 제거)", text: $editingAlias)
-          .textFieldStyle(.plain)
-          .font(.system(size: 12.5))
-          .foregroundStyle(Palette.textPrimary)
-          .focused($aliasFieldFocused)
-          .onSubmit { commitAliasEdit(sym.code) }
-          .onAppear { aliasFieldFocused = true }  // 편집 진입 시 자동 포커스
-          .padding(.horizontal, 8).padding(.vertical, 4)
-          .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 5))
-          .overlay(RoundedRectangle(cornerRadius: 5).stroke(Palette.fieldBorder, lineWidth: 1))
-          .frame(maxWidth: .infinity)
-        codeTag(sym.code)
-        circleIcon("checkmark", bg: Palette.addBtn, tint: .white) { commitAliasEdit(sym.code) }
-          .help("저장")
-        circleIcon("xmark", bg: Palette.deleteBG) { cancelAliasEdit() }
-          .help("취소")
-      } else {
-        // 표시명 클릭 → 별칭 편집 진입(별칭 없던 종목도 새로 지정 가능).
-        Button {
-          beginAliasEdit(sym)
-        } label: {
-          Text(manageLabel(sym))
-            .font(.system(size: 12.5, weight: .medium))
-            .foregroundStyle(Palette.manageLabel)
-            .lineLimit(1).truncationMode(.tail)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help("별칭 수정")
-        codeTag(sym.code)
-        circleIcon("xmark", bg: Palette.deleteBG) { model.removeWatch(code: sym.code) }
-          .help("삭제")
-      }
-    }
-    .padding(.horizontal, 15).padding(.vertical, 6)
-    .modifier(RowHover())
-  }
-
-  private func beginAliasEdit(_ sym: WatchSymbol) {
-    editingAlias = sym.alias
-    editingCode = sym.code
-  }
-
-  private func commitAliasEdit(_ code: String) {
-    model.setWatchAlias(code: code, alias: editingAlias)
-    editingCode = nil
-  }
-
-  private func cancelAliasEdit() {
-    editingCode = nil
-  }
-
-  private func manageLabel(_ s: WatchSymbol) -> String {
-    switch (model.resolvedName(s.code), s.alias.isEmpty) {
-    case (let name?, false): "\(name) · \(s.alias)"
-    case (let name?, true): name
-    case (nil, false): s.alias
-    case (nil, true): s.code
-    }
-  }
-
   // ── 하단 ──
   private var footer: some View {
     VStack(alignment: .leading, spacing: 7) {
@@ -469,6 +420,11 @@ struct PopupView: View {
     Rectangle().fill(Palette.divider).frame(height: 1)
   }
 
+  // 두 컬럼 사이 세로 구분선.
+  private var vHairline: some View {
+    Rectangle().fill(Palette.divider).frame(width: 1)
+  }
+
   // 조회실패 행 폴백: 종목명·통화 조회가 안 돼 currency가 강제 KRW로 채워진 경우 code 형태로 KR/US를 판별한다.
   private func isUSCode(_ code: String) -> Bool { !(code.first?.isNumber ?? true) }
 
@@ -517,6 +473,10 @@ private struct RowInteraction: ViewModifier {
 // 한국: tossinvest.com/stocks/A{code} 로 정확한 딥링크(KRX 표준코드 A접두사).
 // 미국: Open API가 티커만 주고 웹 URL용 productCode(US…/NAS0…/AMX0…)를 안 줘 정확한 딥링크가 불가 → 홈 + 안내.
 let usStockHelp = "미국 종목은 상세 페이지 바로가기를 지원하지 않아요."
+
+// 관리 진입 행(본체)과 관리 컬럼 헤더의 높이. 두 컬럼의 첫 구분선이 어긋나면 바로 눈에 띈다.
+// 값은 진입 행이 자연히 갖는 높이 = iconBadge 22 + 상하 패딩 9×2. 컬럼 헤더는 텍스트뿐이라 더 낮다.
+let popupHeaderHeight: CGFloat = 40
 
 @MainActor
 func openStock(code: String, isUS: Bool) {

@@ -37,8 +37,9 @@ swift format -i Sources/TossStock/Format.swift                              # �
 레이어 체인 — 위→아래로만 의존한다:
 
 ```
-Popup/PopupView.swift      뷰 (보유/관심/관리/하단/설정안내). 색 토큰은 Popup/Palette.swift
-  ├ Popup/SearchSection.swift  관심종목 관리 안의 종목 검색 UI (팝업 전체 재평가를 피하려 분리)
+Popup/PopupView.swift      드롭다운 (관리진입/보유/관심/하단/설정안내). 색 토큰은 Popup/Palette.swift
+  ├ Popup/ManageView.swift     관심종목 관리 컬럼(ManagePane) + PopupAnchor (좌/우 판정)
+  ├ Popup/SearchSection.swift  관리 컬럼 안의 종목 검색 UI (팝업 전체 재평가를 피하려 분리)
   └ Popup/StockModel.swift @MainActor @Observable — 10초 폴링 루프·회전 인덱스·인증/검색 상태 소유
       └ Toss/TossService.swift  도메인 메서드(positionRows/watchRows/quotes/authStatus) + --dump
           └ Toss/TossAPI.swift  URLSession 요청계층 (Bearer·계좌헤더·401/429 재시도)
@@ -64,7 +65,9 @@ Format.swift / ConfigPaths.swift  전 레이어 공용 — 표시 포맷 · ~/.c
 - **색상은 토스증권 규약으로 반전**: 상승/수익 → **빨강**, 하락/손실 → **파랑**, flat → 회색. 일반적인 초록=상승과 반대다 (§3.2, §3.3).
 - **드래그 재배치는 수동 `DragGesture`** (§3.2). 메뉴바 `.window`는 비활성 창이라 SwiftUI `.draggable`(AppKit `NSDraggingSession`)이 시작되지 않는다. commit-on-end로 놓는 순간 1회만 재정렬·영속화해 10초 폴링과 충돌하지 않는다.
 - **App Sandbox OFF** (§4.2). 토큰 저장이 `~/.config/tossstock` 접근을 요구 → entitlements 파일 없음. 미샌드박스 앱은 `network.client` 없이 네트워크 가능. 서명은 ad-hoc(`codesign --sign -`).
-- **ScrollView 높이 붕괴 주의** (§4.2). self-sizing 윈도우에서 `ScrollView` 고유 높이가 0이라 콘텐츠 실측 높이로 고정한다(최대 520).
+- **ScrollView 높이 붕괴 주의** (§4.2). self-sizing 윈도우에서 `ScrollView` 고유 높이가 0이라 콘텐츠 실측 높이로 고정한다(최대 520). **드롭다운에만 해당한다** — 관리 창은 일반 `NSWindow`라 실측이 필요 없고, 거기로 복사하면 창 리사이즈가 죽는다.
+- **관심종목 관리는 별도 창이 아니라 패널이 가로로 넓어지는 컬럼이다** (§3.4). 붙는 쪽은 패널이 놓인 화면의 남는 폭이 정한다(기본 오른쪽, 안 남으면 왼쪽). 패널 프레임은 `PopupPanelGrabber`(`viewDidMoveToWindow`)로 잡고 **캐시 없이 펼칠 때 읽는다** — 회전 타이틀 폭이 바뀌면 패널이 가로로 움직인다. `NSScreen.main` 폴백 금지(key window 가 없으면 아무 화면이나 준다 — 실측에서 x=-1160으로 갔다). 방향은 펼칠 때만 정한다.
+- **관리 컬럼은 자기 높이를 재지 않는다** (§3.4). 옆 컬럼이 쓰는 실측 높이를 받아 쓴다 — 따로 재면 self-sizing 패널에서 `ScrollView`가 0으로 붕괴한다(위 항목과 같은 원인).
 - **국내 일봉 종가 ≠ 전일 기준가** (§3.3). 국내 종목의 일봉 `closePrice`는 **NXT 시간외(~20:00) 마감가**라서 토스 앱·웹이 쓰는 정규장 기준가와 다르다(실측 005930 2026-07-30: 213,500 vs 207,000). 그래서 국내는 일봉 `timestamp`로 직전 거래일을 얻고 그 날 **15:31 1분봉**(`before=<거래일>T06:32:00Z`)의 종가를 기준가로 쓴다. 미국은 일봉 종가가 정규장 종가라 그대로 쓴다 — 이 분기를 없애면 국내 등락률이 몇 %p 틀어진다. 현재가 쪽은 시간외에도 `/prices` 실시간가를 쓴다(토스와 동일 조합).
 - **candles throttle + 세션별 캐시**: 전일종가는 세션 안에서 불변이라 종목당 세션당 1회만 조회한다(`PrevCloseStore`). 호출 간 0.25초 간격을 둔다 — 폴링마다 재조회하도록 되돌리면 10초 주기와 충돌한다 (§3.3). 실제 `MARKET_DATA_CHART` 한도는 응답 헤더 `X-RateLimit-Limit` 실측 기준 **초당 20회**이고 0.25초는 그보다 보수적인 값이다.
 - **페이싱은 슬롯 예약이지 actor 안의 sleep이 아니다** (§3.3). `reserveCandleSlot()`은 중단점 없이 슬롯만 잡고 대기는 호출자가 한다. actor 메서드 안에서 `await Task.sleep`을 하는 형태로 되돌리면 그 중단점에서 격리가 풀려 다른 호출자가 같은 슬롯을 받는다 — 실측(동시 호출자 2)에서 호출 간격 11개 중 5개가 0.000초였다. 호출자가 폴링 하나뿐일 땐 안 드러나고, 검색이 함께 도는 순간 터진다. `--dump`의 `=== candles 페이싱 ===` 블록이 이 계약을 검사한다.
