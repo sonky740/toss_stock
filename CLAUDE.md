@@ -38,11 +38,13 @@ swift format -i Sources/TossStock/Format.swift                              # �
 
 ```
 Popup/PopupView.swift      뷰 (보유/관심/관리/하단/설정안내). 색 토큰은 Popup/Palette.swift
-  └ Popup/StockModel.swift @MainActor @Observable — 10초 폴링 루프·회전 인덱스·인증 상태 소유
-      └ Toss/TossService.swift  도메인 메서드(positionRows/watchRows/authStatus) + --dump
+  ├ Popup/SearchSection.swift  관심종목 관리 안의 종목 검색 UI (팝업 전체 재평가를 피하려 분리)
+  └ Popup/StockModel.swift @MainActor @Observable — 10초 폴링 루프·회전 인덱스·인증/검색 상태 소유
+      └ Toss/TossService.swift  도메인 메서드(positionRows/watchRows/quotes/authStatus) + --dump
           └ Toss/TossAPI.swift  URLSession 요청계층 (Bearer·계좌헤더·401/429 재시도)
                 ├ Toss/TokenStore.swift  actor TokenStore (토큰 캐시·in-flight 공유·디스크 재확인)
-              └ Toss/PrevCloseStore.swift  actor (전일종가 세션별 캐시 + candles 0.25초 페이싱)
+                ├ Toss/StockUniverse.swift  actor (검색용 전체 종목 수집·하루 캐시·로컬 검색)
+              └ Toss/PrevCloseStore.swift  actor (전일종가 세션별 캐시 + candles 슬롯 예약)
 Popup/ReorderController.swift  드래그 재배치 세션 + edge 자동 스크롤 (뷰가 관찰)
 Toss/TossDTO.swift  API 응답 DTO(수동 init + decimal 헬퍼) / Toss/DisplayRow.swift  service → view 표시용 Row
 Storage/Watchlist.swift / Storage/HoldingsOrder.swift  설정 파일(symbols.tsv / holdings_order.txt) I/O + 드래그 순서 저장
@@ -64,9 +66,12 @@ Format.swift / ConfigPaths.swift  전 레이어 공용 — 표시 포맷 · ~/.c
 - **App Sandbox OFF** (§4.2). 토큰 저장이 `~/.config/tossstock` 접근을 요구 → entitlements 파일 없음. 미샌드박스 앱은 `network.client` 없이 네트워크 가능. 서명은 ad-hoc(`codesign --sign -`).
 - **ScrollView 높이 붕괴 주의** (§4.2). self-sizing 윈도우에서 `ScrollView` 고유 높이가 0이라 콘텐츠 실측 높이로 고정한다(최대 520).
 - **국내 일봉 종가 ≠ 전일 기준가** (§3.3). 국내 종목의 일봉 `closePrice`는 **NXT 시간외(~20:00) 마감가**라서 토스 앱·웹이 쓰는 정규장 기준가와 다르다(실측 005930 2026-07-30: 213,500 vs 207,000). 그래서 국내는 일봉 `timestamp`로 직전 거래일을 얻고 그 날 **15:31 1분봉**(`before=<거래일>T06:32:00Z`)의 종가를 기준가로 쓴다. 미국은 일봉 종가가 정규장 종가라 그대로 쓴다 — 이 분기를 없애면 국내 등락률이 몇 %p 틀어진다. 현재가 쪽은 시간외에도 `/prices` 실시간가를 쓴다(토스와 동일 조합).
-- **candles throttle + 세션별 캐시**: 전일종가는 세션 안에서 불변이라 종목당 세션당 1회만 조회한다(`PrevCloseStore`). `MARKET_DATA_CHART`(초당 5회) 제한 때문에 호출 간 0.25초 간격을 둔다 — 폴링마다 재조회하도록 되돌리면 10초 주기와 충돌한다 (§3.3).
+- **candles throttle + 세션별 캐시**: 전일종가는 세션 안에서 불변이라 종목당 세션당 1회만 조회한다(`PrevCloseStore`). 호출 간 0.25초 간격을 둔다 — 폴링마다 재조회하도록 되돌리면 10초 주기와 충돌한다 (§3.3). 실제 `MARKET_DATA_CHART` 한도는 응답 헤더 `X-RateLimit-Limit` 실측 기준 **초당 20회**이고 0.25초는 그보다 보수적인 값이다.
+- **페이싱은 슬롯 예약이지 actor 안의 sleep이 아니다** (§3.3). `reserveCandleSlot()`은 중단점 없이 슬롯만 잡고 대기는 호출자가 한다. actor 메서드 안에서 `await Task.sleep`을 하는 형태로 되돌리면 그 중단점에서 격리가 풀려 다른 호출자가 같은 슬롯을 받는다 — 실측(동시 호출자 2)에서 호출 간격 11개 중 5개가 0.000초였다. 호출자가 폴링 하나뿐일 땐 안 드러나고, 검색이 함께 도는 순간 터진다. `--dump`의 `=== candles 페이싱 ===` 블록이 이 계약을 검사한다.
+- **검색 등락률은 관심종목과 같은 경로를 타야 한다** (§3.4). `TossService.quotes`가 `prevClose`를 그대로 쓰고 `PrevCloseStore` 캐시도 공유한다. 검색 쪽에서 일봉 `closePrice`를 직접 쓰면 국내 종목이 NXT 시간외 마감가를 기준가로 잡아 같은 종목이 두 섹션에서 다른 등락률을 보인다.
+- **유니버스 캐시만 벽시계 날짜 키를 쓴다** (§2.3). 위의 전일종가 캐시와 정반대라 헷갈리기 쉽다 — 유니버스는 일 배치 데이터라 갱신이 하루 늦어도 신규 상장 종목이 하루 늦게 검색될 뿐이고, 전일종가는 09:00 KST 세션 롤을 놓치면 등락률이 한 세션 어긋난다.
 - **캐시 키를 KST 날짜로 되돌리지 말 것** (§3.3). 기준가가 갈리는 경계는 자정이 아니라 **09:00 KST**(국내 개장 / 미국 오버나이트 개장 = 20:00 ET)다. 날짜 키를 쓰면 00:00~09:00 KST에 채운 값이 세션 내내 남아 등락률이 한 세션 어긋나고, **앱을 재시작해야만** 맞는다. 그래서 키는 시장 시계 종목(`005930`/`SPY`)의 최신 일봉 날짜이고, 기준 봉도 인덱스가 아니라 날짜 비교로 고른다(현 세션 미거래 종목은 `candles[0]`이 곧 기준 봉). 미국 일봉 stamp(`T13:00+09:00` = 00:00 ET)는 롤 시각이 아니다 — 라벨보다 4시간 이르게 롤한다. 벽시계 계산으로 대체하려는 시도는 여기서 깨진다.
 
 ## 런타임 설정 파일 (레포 밖, 런타임 생성)
 
-`~/.config/tossstock/` — `auth.env`(자격증명, 커밋 금지), `token.json`(토큰 캐시), `symbols.tsv`(관심종목, 줄 순서=표시 순서), `holdings_order.txt`(보유종목 드래그 순서). 스키마는 SPEC.md §2.3.
+`~/.config/tossstock/` — `auth.env`(자격증명, 커밋 금지), `token.json`(토큰 캐시), `symbols.tsv`(관심종목, 줄 순서=표시 순서), `holdings_order.txt`(보유종목 드래그 순서), `universe.json`(검색용 전체 종목 15,176건·931KB, 하루 1회 갱신). 스키마는 SPEC.md §2.3.

@@ -9,6 +9,7 @@ struct ConfigPaths: Sendable {
   var tokenJSON: URL { dir.appendingPathComponent("token.json") }
   var symbolsTSV: URL { dir.appendingPathComponent("symbols.tsv") }
   var holdingsOrder: URL { dir.appendingPathComponent("holdings_order.txt") }  // 보유종목 드래그 재배치 순서
+  var universeJSON: URL { dir.appendingPathComponent("universe.json") }  // 종목 검색용 전체 종목 목록 캐시
 
   static let standard = Self(
     dir: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/tossstock")

@@ -71,21 +71,58 @@ struct TossService: Sendable {
 
       let market = Self.market(price.currency)
       let prev = await prevClose(sym.code, market: market, sessionDay: sessionDays[market])
-
-      let change: WatchChange
-      if let prev, prev > 0 {
-        let chg = last - prev
-        let dir: Direction = chg > 0 ? .up : (chg < 0 ? .down : .flat)
-        change = .priced(changeAmount: abs(chg), ratePercent: abs(chg / prev * 100), direction: dir)
-      } else {
-        change = .noPrevClose
-      }
+      let change = Self.change(last: last, prevClose: prev)
       rows.append(
         WatchRow(
           id: sym.code, rowName: row, titleName: title,
           currency: price.currency, lastPrice: last, change: change, resolvedName: resolved))
     }
     return rows
+  }
+
+  /// 검색 결과 시세. 가격을 배치 1회로 먼저 흘리고, 등락은 종목별로 완성되는 대로 흘린다.
+  ///
+  /// 등락률·등락액을 주는 엔드포인트가 없어(`/prices`는 현재가만) 관심종목과 **같은 경로**로 계산한다.
+  /// 여기서 일봉 종가를 직접 쓰면 국내 종목이 NXT 시간외 마감가를 기준가로 잡아 관심종목 섹션과
+  /// 다른 등락률을 보이게 된다(§3.3). 그래서 `prevClose`를 그대로 탄다 — 캐시도 함께 공유한다.
+  func quotes(for codes: [String]) -> AsyncStream<QuoteUpdate> {
+    AsyncStream { continuation in
+      let task = Task { await stream(codes, into: continuation) }
+      continuation.onTermination = { _ in task.cancel() }
+    }
+  }
+
+  private func stream(_ codes: [String], into continuation: AsyncStream<QuoteUpdate>.Continuation) async {
+    guard !codes.isEmpty else {
+      continuation.finish()
+      return
+    }
+    let csv = codes.joined(separator: ",")
+    let prices = (try? await api.get("/api/v1/prices?symbols=\(csv)", as: [PriceResponse].self)) ?? []
+    let priceBy = Dictionary(prices.map { ($0.symbol, $0) }, uniquingKeysWith: { a, _ in a })
+
+    var priced: [(code: String, last: Double, market: Market)] = []
+    for code in codes {
+      guard let price = priceBy[code], let last = price.lastPrice else {
+        continuation.yield(.unavailable(symbol: code))
+        continue
+      }
+      continuation.yield(.priced(symbol: code, lastPrice: last, currency: price.currency))
+      priced.append((code, last, Self.market(price.currency)))
+    }
+
+    var sessionDays: [Market: String] = [:]
+    for market in Set(priced.map(\.market)) {
+      if Task.isCancelled { break }
+      sessionDays[market] = await sessionDay(market)
+    }
+
+    for item in priced {
+      if Task.isCancelled { break }  // 질의가 바뀌면 남은 candles 호출을 낭비하지 않는다
+      let prev = await prevClose(item.code, market: item.market, sessionDay: sessionDays[item.market])
+      continuation.yield(.changed(symbol: item.code, change: Self.change(last: item.last, prevClose: prev)))
+    }
+    continuation.finish()
   }
 
   func authStatus() async throws -> AuthStatus {
@@ -175,6 +212,14 @@ struct TossService: Sendable {
     case failed
   }
 
+  /// 등락 계산 단일 지점. 관심종목 행과 검색 결과가 같은 종목에서 다른 숫자를 내지 않게 여기로 모은다.
+  private static func change(last: Double, prevClose prev: Double?) -> WatchChange {
+    guard let prev, prev > 0 else { return .noPrevClose }
+    let delta = last - prev
+    let direction: Direction = delta > 0 ? .up : (delta < 0 ? .down : .flat)
+    return .priced(changeAmount: abs(delta), ratePercent: abs(delta / prev * 100), direction: direction)
+  }
+
   /// candles 호출 직전 페이싱. 슬롯 예약은 actor 안에서 원자적으로, 대기는 여기 밖에서 한다(`PrevCloseStore`).
   private func awaitCandleSlot() async {
     let delay = await prevCloses.reserveCandleSlot()
@@ -202,7 +247,10 @@ enum Dump {
   }
 
   static func run() async {
-    let service = TossService(api: TossAPI(tokens: TokenStore()))
+    let api = TossAPI(tokens: TokenStore())
+    let service = TossService(api: api)
+
+    await dumpPacing()
 
     print("=== auth ===")
     do {
@@ -233,6 +281,47 @@ enum Dump {
         )
       }
     } catch { print("  FAILED: \(error)") }
+
+    await dumpSearch(api: api, service: service)
+  }
+
+  /// 유니버스 수집 → 로컬 검색 → 시세 스트림. 검색 경로 전체를 GUI 없이 한 번 통과시킨다.
+  private static func dumpSearch(api: TossAPI, service: TossService) async {
+    print("=== stock universe ===")
+    let universe = StockUniverse(api: api)
+    for await progress in await universe.load() {
+      switch progress {
+      case .fetching(let done, let total): print("  수집 \(done)/\(total)")
+      case .finished(let count, let failedMarkets):
+        print("  count=\(count) failed=\(failedMarkets.isEmpty ? "-" : failedMarkets.joined(separator: ","))")
+      }
+    }
+
+    for query in ["삼성전자", "AAPL"] {
+      let hits = await universe.search(query, limit: 3)
+      print("=== search \"\(query)\" ===")
+      print("  hits=\(hits.map { "\($0.symbol)/\($0.name)/\($0.market)" }.joined(separator: "  "))")
+      for await update in service.quotes(for: hits.map(\.symbol)) {
+        print("  \(update)")
+      }
+    }
+  }
+
+  /// candles 슬롯 예약이 동시 호출자에서도 간격을 지키는지. 폴링과 검색이 함께 도는 상황의 계약이다.
+  /// 예약이 원자적이지 않으면 여러 호출자가 같은 슬롯을 받아 간격이 0으로 붕괴한다(2026-08-13 실측).
+  private static func dumpPacing() async {
+    let store = PrevCloseStore()
+    var delays: [TimeInterval] = []
+    await withTaskGroup(of: TimeInterval.self) { group in
+      for _ in 0..<6 { group.addTask { await store.reserveCandleSlot() } }
+      for await delay in group { delays.append(delay) }
+    }
+    delays.sort()
+    let gaps = zip(delays.dropFirst(), delays).map { $0 - $1 }
+    let collapsed = gaps.filter { $0 < 0.2 }.count
+    print("=== candles 페이싱(동시 예약 6) ===")
+    print("  대기 \(delays.map { String(format: "%.2f", $0) }.joined(separator: " "))")
+    print("  간격 붕괴(0.2초 미만): \(collapsed)/\(gaps.count) \(collapsed == 0 ? "OK" : "FAIL")")
   }
 
   private static func tag(_ c: Currency) -> String {

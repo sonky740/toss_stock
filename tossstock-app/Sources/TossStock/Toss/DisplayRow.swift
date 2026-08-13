@@ -53,6 +53,32 @@ extension WatchRow {
   }
 }
 
+/// 종목 검색 결과 한 줄. 이름·심볼은 유니버스에서 즉시 채우고, 시세와 등락은 도착하는 대로 갱신한다.
+/// `lastPrice`가 nil이면 가격이 아직 안 왔다는 뜻이고, `change`가 nil이면 등락 계산이 진행 중이라는 뜻이다.
+struct SearchRow: Identifiable, Sendable {
+  let id: String  // 종목코드
+  let name: String
+  let market: String
+  var currency: Currency?
+  var lastPrice: Double?
+  var change: WatchChange?
+  var isWatched: Bool
+
+  init(entry: UniverseEntry, isWatched: Bool) {
+    self.id = entry.symbol
+    self.name = entry.name
+    self.market = entry.market
+    self.isWatched = isWatched
+  }
+}
+
+/// 검색 결과 시세가 도착하는 단위. 가격이 배치로 먼저 오고 등락이 종목별로 뒤따른다(`TossService.quotes`).
+enum QuoteUpdate: Sendable {
+  case priced(symbol: String, lastPrice: Double, currency: Currency)
+  case unavailable(symbol: String)  // /prices에 없음 — 상폐·거래정지 등
+  case changed(symbol: String, change: WatchChange)
+}
+
 struct AuthStatus: Sendable {
   let accountNo: String
   let accountSeq: Int

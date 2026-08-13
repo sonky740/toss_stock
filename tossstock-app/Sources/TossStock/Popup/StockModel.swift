@@ -19,6 +19,14 @@ enum AuthCheck: Sendable {
   case failed
 }
 
+/// 종목 검색용 유니버스 확보 상태. `partial`은 일부 마켓 수집 실패 — 검색은 되지만 목록에 구멍이 있다.
+enum UniverseState: Sendable, Equatable {
+  case idle
+  case loading(done: Int, total: Int)
+  case ready(partial: Bool)
+  case unavailable
+}
+
 @MainActor
 @Observable
 final class StockModel {
@@ -29,13 +37,21 @@ final class StockModel {
   private(set) var rotationIndex = 0
   private(set) var needsCredentials = false
   private(set) var authCheck: AuthCheck = .none
+  private(set) var universeState: UniverseState = .idle
+  private(set) var searchResults: [SearchRow] = []
+
+  static let searchLimit = 8
 
   private let service: TossService
+  private let universe: StockUniverse
   private var pollTask: Task<Void, Never>?
   private var authDismissTask: Task<Void, Never>?
+  private var universeTask: Task<Void, Never>?
+  private var searchTask: Task<Void, Never>?
 
   init(service: TossService = TossService(api: TossAPI(tokens: TokenStore()))) {
     self.service = service
+    self.universe = StockUniverse(api: service.api)
     needsCredentials = !TokenStore.hasCredentials()
     if !needsCredentials { start() }  // 자격증명 없으면 폴링 보류(무의미한 401 방지)
   }
@@ -58,6 +74,7 @@ final class StockModel {
   /// 관심종목 추가/삭제 후 호출(symbols.tsv 재로딩 + 즉시 갱신).
   func reloadWatchlist() {
     watchSymbols = Watchlist.read()
+    syncWatchedFlags()
     refreshNow()
   }
 
@@ -75,6 +92,7 @@ final class StockModel {
   func removeWatch(code rawCode: String) {
     Watchlist.remove(code: rawCode)
     watchSymbols = Watchlist.read()
+    syncWatchedFlags()
     guard case .loaded(var rows) = watch else { return }
     rows.removeAll { $0.id == Watchlist.cleanCode(rawCode) }
     watch = .loaded(rows)
@@ -101,6 +119,79 @@ final class StockModel {
   func aliased(_ name: String, for code: String) -> String {
     guard let alias = watchSymbols.first(where: { $0.code == code })?.alias, !alias.isEmpty else { return name }
     return "\(name) · \(alias)"
+  }
+
+  // ── 종목 검색 (유니버스 로컬 검색 + 시세·등락 점진 채움) ──
+
+  /// 유니버스 확보 시작. 관심종목 관리 섹션을 처음 펼칠 때 부른다.
+  /// 콜드 수집은 마켓 7개 × 1.2초라 8초쯤 걸리므로, 검색을 안 쓰는 세션에서는 아예 시작하지 않는다.
+  func prepareSearch() {
+    guard universeTask == nil else { return }
+    universeTask = Task { [weak self] in
+      guard let self else { return }
+      for await progress in await self.universe.load() {
+        switch progress {
+        case .fetching(let done, let total):
+          self.universeState = .loading(done: done, total: total)
+        case .finished(let count, let failedMarkets):
+          self.universeState = count > 0 ? .ready(partial: !failedMarkets.isEmpty) : .unavailable
+          // 전량 실패면 가드를 풀어 다음 펼침에 다시 받는다. 안 풀면 메뉴바 앱이 몇 주씩 떠 있는 동안
+          // 복구 수단이 앱 재시작뿐이다. 부분 실패는 검색이 되므로 경고만 두고 재수집하지 않는다.
+          if count == 0 { self.universeTask = nil }
+        }
+      }
+    }
+  }
+
+  /// 질의 변경. 200ms 디바운스 후 로컬 검색 → 가격 배치 → 등락 순으로 채운다.
+  func search(_ query: String) {
+    searchTask?.cancel()
+    guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+      searchResults = []
+      return
+    }
+    searchTask = Task { [weak self] in
+      try? await Task.sleep(for: .milliseconds(200))
+      guard !Task.isCancelled, let self else { return }
+      await self.runSearch(query)
+    }
+  }
+
+  private func runSearch(_ query: String) async {
+    let hits = await universe.search(query, limit: Self.searchLimit)
+    guard !Task.isCancelled else { return }
+    let watched = Set(watchSymbols.map(\.code))
+    searchResults = hits.map { SearchRow(entry: $0, isWatched: watched.contains($0.symbol)) }
+    guard !searchResults.isEmpty else { return }
+
+    for await update in service.quotes(for: searchResults.map(\.id)) {
+      guard !Task.isCancelled else { return }
+      apply(update)
+    }
+  }
+
+  private func apply(_ update: QuoteUpdate) {
+    switch update {
+    case .priced(let symbol, let lastPrice, let currency):
+      guard let i = searchResults.firstIndex(where: { $0.id == symbol }) else { return }
+      searchResults[i].lastPrice = lastPrice
+      searchResults[i].currency = currency
+    case .unavailable(let symbol):
+      guard let i = searchResults.firstIndex(where: { $0.id == symbol }) else { return }
+      searchResults[i].change = .lookupFailed
+    case .changed(let symbol, let change):
+      guard let i = searchResults.firstIndex(where: { $0.id == symbol }) else { return }
+      searchResults[i].change = change
+    }
+  }
+
+  /// 검색 결과의 등록 표시를 현재 관심종목에 맞춘다. 결과를 다시 조회하지 않고 플래그만 고친다.
+  private func syncWatchedFlags() {
+    guard !searchResults.isEmpty else { return }
+    let watched = Set(watchSymbols.map(\.code))
+    for i in searchResults.indices {
+      searchResults[i].isWatched = watched.contains(searchResults[i].id)
+    }
   }
 
   /// 앱 내 인증 점검(토큰 발급 + accounts 조회). 429면 캐시 폴백.

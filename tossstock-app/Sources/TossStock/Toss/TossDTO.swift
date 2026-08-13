@@ -99,6 +99,13 @@ struct StockInfo: Decodable, Sendable {
   let name: String  // 한글 종목명
 }
 
+// /stocks/all — 마켓별 전체 종목. 금액 필드가 없어 합성 Decodable로 충분하다(§4.3의 수동 init은 금액 때문).
+// 미국 종목도 한글명을 주지만, NASDAQ·AMEX ETF 상당수는 name이 심볼과 같다(실측: "AAAP", "AAA").
+struct ListedStock: Decodable, Sendable {
+  let symbol: String
+  let name: String
+}
+
 // /candles — 최신 봉부터 역순. interval=1d 면 candles[0]=오늘, candles[1]=직전 거래일.
 struct CandlePageResponse: Decodable, Sendable {
   let candles: [Candle]

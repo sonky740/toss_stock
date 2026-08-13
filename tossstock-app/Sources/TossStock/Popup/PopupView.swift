@@ -11,8 +11,7 @@ import SwiftUI
 
 struct PopupView: View {
   let model: StockModel
-  @State private var newCode = ""
-  @State private var newAlias = ""
+  @State private var searchQuery = ""
   @State private var contentHeight: CGFloat = 0
   @State private var manageExpanded = false
   @State private var reorder = ReorderController()  // 드래그 재배치 세션 + edge 자동 스크롤(섹션 공유)
@@ -129,7 +128,7 @@ struct PopupView: View {
       pnlText: Format.pnl(r.pnlAmount, r.currency),
       direction: r.direction,
       onTap: { openStock(code: r.id, isUS: r.currency.isUSD) },
-      help: r.currency.isUSD ? Self.usStockHelp : nil)
+      help: r.currency.isUSD ? usStockHelp : nil)
   }
 
   // ── 관심종목 ──
@@ -166,17 +165,17 @@ struct PopupView: View {
         pnlText: "\(Format.arrow(dir))\(Format.changeAbs(chg, r.currency))",
         direction: dir,
         onTap: { openStock(code: r.id, isUS: r.currency.isUSD) },
-        help: r.currency.isUSD ? Self.usStockHelp : nil)
+        help: r.currency.isUSD ? usStockHelp : nil)
     case .noPrevClose:
       noteRow(
         name: r.rowName, price: Format.price(r.lastPrice, r.currency), note: "등락 데이터 없음",
         onTap: { openStock(code: r.id, isUS: r.currency.isUSD) },
-        help: r.currency.isUSD ? Self.usStockHelp : nil)
+        help: r.currency.isUSD ? usStockHelp : nil)
     case .lookupFailed:
       noteRow(
         name: r.rowName, price: nil, note: "조회실패 (코드/인증 확인)",
         onTap: { openStock(code: r.id, isUS: isUSCode(r.id)) },
-        help: isUSCode(r.id) ? Self.usStockHelp : nil)
+        help: isUSCode(r.id) ? usStockHelp : nil)
     }
   }
 
@@ -247,6 +246,8 @@ struct PopupView: View {
     // 헤더 전체(화살표+배지+텍스트)를 클릭 가능하게 — DisclosureGroup은 chevron만 히트되는 문제 회피.
     Button {
       manageExpanded.toggle()
+      // 유니버스 콜드 수집이 8초라 검색을 안 쓰는 세션에서는 시작조차 하지 않는다.
+      if manageExpanded { model.prepareSearch() }
     } label: {
       HStack(spacing: 9) {
         Image(systemName: "chevron.right")
@@ -257,7 +258,8 @@ struct PopupView: View {
         Text("관심종목 관리")
           .font(.system(size: 13, weight: .semibold))
           .foregroundStyle(Palette.textPrimary)
-        Text("추가 · 삭제")
+        // 보유("매입가 대비")·관심("당일 등락")과 같은 결로 상태를 말한다 — 동작 나열은 기능이 늘 때마다 낡는다.
+        Text(model.watchSymbols.isEmpty ? "등록된 종목 없음" : "\(model.watchSymbols.count)개 등록됨")
           .font(.system(size: 11))
           .foregroundStyle(Palette.textSecondary)
         Spacer()
@@ -270,24 +272,7 @@ struct PopupView: View {
     .modifier(RowHover())
 
     if manageExpanded {
-      HStack(spacing: 6) {
-        darkField("코드 (005930 / AAPL / 0190C0)", text: $newCode)
-        darkField("별칭(선택)", text: $newAlias)
-        Button {
-          add()
-        } label: {
-          Text("추가")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 15).padding(.vertical, 7)
-            .background(Palette.addBtn, in: RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .disabled(newCode.trimmingCharacters(in: .whitespaces).isEmpty)
-        .opacity(newCode.trimmingCharacters(in: .whitespaces).isEmpty ? 0.5 : 1)
-      }
-      .padding(.horizontal, 15).padding(.top, 2).padding(.bottom, 9)
+      SearchSection(model: model, query: $searchQuery)
 
       ForEach(model.watchSymbols) { sym in manageRow(sym) }
     }
@@ -337,26 +322,6 @@ struct PopupView: View {
     .modifier(RowHover())
   }
 
-  private func codeTag(_ code: String) -> some View {
-    Text("(\(code))")
-      .font(.system(size: 11, design: .monospaced))
-      .foregroundStyle(Palette.time)
-  }
-
-  private func circleIcon(_ symbol: String, bg: Color, tint: Color = Palette.priceMono, action: @escaping () -> Void)
-    -> some View
-  {
-    Button(action: action) {
-      Image(systemName: symbol)
-        .font(.system(size: 8, weight: .bold))
-        .foregroundStyle(tint)
-        .frame(width: 20, height: 20)
-        .background(bg, in: Circle())
-    }
-    .buttonStyle(.plain)
-    .pointerCursor()
-  }
-
   private func beginAliasEdit(_ sym: WatchSymbol) {
     editingAlias = sym.alias
     editingCode = sym.code
@@ -377,13 +342,6 @@ struct PopupView: View {
     case (let name?, true): name
     case (nil, false): s.alias
     case (nil, true): s.code
-    }
-  }
-
-  private func add() {
-    if model.addWatch(code: newCode, alias: newAlias) {
-      newCode = ""
-      newAlias = ""
     }
   }
 
@@ -503,17 +461,6 @@ struct PopupView: View {
     .pointerCursor()
   }
 
-  private func darkField(_ placeholder: String, text: Binding<String>) -> some View {
-    TextField(placeholder, text: text)
-      .textFieldStyle(.plain)
-      .font(.system(size: 12))
-      .foregroundStyle(Palette.textPrimary)
-      .padding(.horizontal, 9).padding(.vertical, 7)
-      .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 6))
-      .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.fieldBorder, lineWidth: 1))
-      .frame(maxWidth: .infinity)
-  }
-
   private var sectionDivider: some View {
     hairline.padding(.horizontal, 15).padding(.vertical, 8)
   }
@@ -522,45 +469,10 @@ struct PopupView: View {
     Rectangle().fill(Palette.divider).frame(height: 1)
   }
 
-  // ── 종목 페이지 열기 (§3.2/§3.3) ──
-  // 한국: tossinvest.com/stocks/A{code} 로 정확한 딥링크(KRX 표준코드 A접두사).
-  // 미국: Open API가 티커만 주고 웹 URL용 productCode(US…/NAS0…/AMX0…)를 안 줘 정확한 딥링크가 불가
-  //   → 홈으로 이동 + 툴팁 안내. currency로 KR/US 판별(조회실패 행은 currency 신뢰 불가 → code 첫 글자).
-  static let usStockHelp = "미국 종목은 상세 페이지 바로가기를 지원하지 않아요."
-
-  private func openStock(code: String, isUS: Bool) {
-    let s = isUS ? "https://www.tossinvest.com/" : "https://www.tossinvest.com/stocks/A\(code)"
-    guard let url = URL(string: s) else { return }
-    NSWorkspace.shared.open(url)
-  }
-
-  // 조회실패 행 폴백: 종목명·통화 조회가 안 돼 currency가 강제 KRW로 채워진 경우 code 형태로 판별.
+  // 조회실패 행 폴백: 종목명·통화 조회가 안 돼 currency가 강제 KRW로 채워진 경우 code 형태로 KR/US를 판별한다.
   private func isUSCode(_ code: String) -> Bool { !(code.first?.isNumber ?? true) }
 
   // ── helpers ──
-  private func placeholder(_ text: String) -> some View {
-    Text(text)
-      .font(.system(size: 12))
-      .foregroundStyle(Palette.textSecondary)
-      .padding(.horizontal, 15).padding(.vertical, 6)
-  }
-
-  private func tintColor(_ d: Direction) -> Color {
-    switch d {
-    case .up: Palette.up
-    case .down: Palette.down
-    case .flat: Palette.neutral
-    }
-  }
-
-  private func pillColor(_ d: Direction) -> Color {
-    switch d {
-    case .up: Palette.upPill
-    case .down: Palette.downPill
-    case .flat: Palette.neutralPill
-    }
-  }
-
   private func mask(_ no: String) -> String {
     no.count <= 4 ? no : String(repeating: "•", count: max(0, no.count - 4)) + no.suffix(4)
   }
@@ -599,8 +511,78 @@ private struct RowInteraction: ViewModifier {
   }
 }
 
-// 클릭 가능한 행(관심종목 관리) hover 배경. 재배치 행은 Reorderable 이 드래그 상태와 함께 다룬다.
-private struct RowHover: ViewModifier {
+// ── 팝업 공용 조각 (PopupView·SearchSection 공유) ──
+
+// 종목 페이지 열기 (§3.2/§3.3/§3.4).
+// 한국: tossinvest.com/stocks/A{code} 로 정확한 딥링크(KRX 표준코드 A접두사).
+// 미국: Open API가 티커만 주고 웹 URL용 productCode(US…/NAS0…/AMX0…)를 안 줘 정확한 딥링크가 불가 → 홈 + 안내.
+let usStockHelp = "미국 종목은 상세 페이지 바로가기를 지원하지 않아요."
+
+@MainActor
+func openStock(code: String, isUS: Bool) {
+  let s = isUS ? "https://www.tossinvest.com/" : "https://www.tossinvest.com/stocks/A\(code)"
+  guard let url = URL(string: s) else { return }
+  NSWorkspace.shared.open(url)
+}
+
+func darkField(_ prompt: String, text: Binding<String>) -> some View {
+  TextField(prompt, text: text)
+    .textFieldStyle(.plain)
+    .font(.system(size: 12))
+    .foregroundStyle(Palette.textPrimary)
+    .padding(.horizontal, 9).padding(.vertical, 7)
+    .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 6))
+    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Palette.fieldBorder, lineWidth: 1))
+    .frame(maxWidth: .infinity)
+}
+
+// pointerCursor(NSCursor)가 메인 격리라 이 헬퍼도 같은 도메인이어야 한다.
+@MainActor
+func circleIcon(_ symbol: String, bg: Color, tint: Color = Palette.priceMono, action: @escaping () -> Void)
+  -> some View
+{
+  Button(action: action) {
+    Image(systemName: symbol)
+      .font(.system(size: 8, weight: .bold))
+      .foregroundStyle(tint)
+      .frame(width: 20, height: 20)
+      .background(bg, in: Circle())
+  }
+  .buttonStyle(.plain)
+  .pointerCursor()
+}
+
+func codeTag(_ code: String) -> some View {
+  Text("(\(code))")
+    .font(.system(size: 11, design: .monospaced))
+    .foregroundStyle(Palette.time)
+}
+
+func placeholder(_ text: String) -> some View {
+  Text(text)
+    .font(.system(size: 12))
+    .foregroundStyle(Palette.textSecondary)
+    .padding(.horizontal, 15).padding(.vertical, 6)
+}
+
+func tintColor(_ d: Direction) -> Color {
+  switch d {
+  case .up: Palette.up
+  case .down: Palette.down
+  case .flat: Palette.neutral
+  }
+}
+
+func pillColor(_ d: Direction) -> Color {
+  switch d {
+  case .up: Palette.upPill
+  case .down: Palette.downPill
+  case .flat: Palette.neutralPill
+  }
+}
+
+// 클릭 가능한 행(관심종목 관리·검색 결과) hover 배경. 재배치 행은 Reorderable 이 드래그 상태와 함께 다룬다.
+struct RowHover: ViewModifier {
   @State private var hovering = false
 
   func body(content: Content) -> some View {
@@ -614,7 +596,7 @@ private struct RowHover: ViewModifier {
 extension View {
   // .plain 버튼엔 커서가 안 붙는다. MenuBarExtra(.window)는 포인터 이동 시 OS가 커서를 리셋하므로
   // .active 마다 재-set 한다(RowInteraction·dragHandle 과 동일 패턴).
-  fileprivate func pointerCursor() -> some View {
+  func pointerCursor() -> some View {
     onContinuousHover { phase in
       switch phase {
       case .active: NSCursor.pointingHand.set()
