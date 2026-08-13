@@ -1,7 +1,7 @@
 import Foundation
 
 // ─────────────────────────────────────────────────────────────
-// PrevCloseStore — 관심종목·검색 전일종가 캐시 + candles 호출 페이싱.
+// PrevCloseStore — 관심종목·검색 전일종가 캐시 + 시장 세션일 캐시 + candles 호출 페이싱.
 // 전일종가는 세션 안에서 불변이라 종목당 세션당 1회만 조회한다(10초 폴링마다 재조회 금지).
 // 키는 벽시계 날짜가 아니라 시장 세션일이다 — 세션 롤은 자정이 아니라 09:00 KST·00:00 ET다.
 // candles(MARKET_DATA_CHART) 간격도 여기서 지킨다. 호출자가 폴링·검색 둘이라 예약과 대기를 가른다.
@@ -9,9 +9,11 @@ import Foundation
 
 actor PrevCloseStore {
   private var entries: [String: (day: String, value: Double)] = [:]
+  private var sessionDays: [Market: (day: String, at: Date)] = [:]
   private var nextSlotAt: Date?
 
   private static let minCallInterval: TimeInterval = 0.25
+  private static let sessionDayTTL: TimeInterval = 60
 
   /// 해당 세션일에 캐시된 값. 세션이 넘어갔으면 nil(재조회).
   func cached(_ code: String, on day: String) -> Double? {
@@ -21,6 +23,20 @@ actor PrevCloseStore {
 
   func store(_ value: Double, for code: String, on day: String) {
     entries[code] = (day, value)
+  }
+
+  /// 시장 세션일 캐시. 하루 두 번 바뀌는 값이라 폴링·검색마다 시장 시계 종목을 다시 부를 이유가 없다.
+  ///
+  /// **TTL 은 경과시간이어야 한다.** 달력 날짜를 키로 쓰면 위 전일종가 캐시가 피해 간 09:00 KST 롤
+  /// 문제가 그대로 돌아온다 — 00:00~09:00 KST 에 잡힌 세션일이 그 날 내내 남는다.
+  func cachedSessionDay(_ market: Market) -> String? {
+    guard let entry = sessionDays[market], Date().timeIntervalSince(entry.at) < Self.sessionDayTTL
+    else { return nil }
+    return entry.day
+  }
+
+  func storeSessionDay(_ day: String, for market: Market) {
+    sessionDays[market] = (day, Date())
   }
 
   /// 다음 candles 호출 슬롯을 예약하고 그때까지 남은 대기 시간을 돌려준다. 호출자가 그만큼 잔 뒤 호출한다.

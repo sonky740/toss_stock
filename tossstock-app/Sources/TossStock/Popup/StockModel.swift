@@ -143,7 +143,8 @@ final class StockModel {
     }
   }
 
-  /// 질의 변경. 200ms 디바운스 후 로컬 검색 → 가격 배치 → 등락 순으로 채운다.
+  /// 질의 변경. 350ms 디바운스 후 로컬 검색 → 가격 배치 → 등락 순으로 채운다.
+  /// 한글은 자모 조합 단계마다 `onChange`가 오므로 디바운스가 짧으면 조합 중간 질의로 시세를 부른다.
   func search(_ query: String) {
     searchTask?.cancel()
     guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -151,7 +152,7 @@ final class StockModel {
       return
     }
     searchTask = Task { [weak self] in
-      try? await Task.sleep(for: .milliseconds(200))
+      try? await Task.sleep(for: .milliseconds(350))
       guard !Task.isCancelled, let self else { return }
       await self.runSearch(query)
     }

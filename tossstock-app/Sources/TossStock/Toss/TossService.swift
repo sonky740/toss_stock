@@ -181,12 +181,16 @@ struct TossService: Sendable {
 
   /// 시장의 현재 세션일. clock 종목의 최신 일봉 날짜를 그대로 쓴다 — 종목 일봉과 같은 stamp
   /// 공간이라 DST·휴장·반휴장을 계산할 필요가 없고, 벽시계 날짜와 달리 롤 시각이 저절로 맞는다.
+  /// 60초 캐시(`PrevCloseStore`) — 조회 실패는 캐시하지 않는다(다음 폴링에 재시도).
   private func sessionDay(_ market: Market) async -> String? {
+    if let cached = await prevCloses.cachedSessionDay(market) { return cached }
     await awaitCandleSlot()
     let page = try? await api.get(
       "/api/v1/candles?symbol=\(market.clockSymbol)&interval=1d&count=1",
       as: CandlePageResponse.self)
-    return page?.candles.first?.day
+    guard let day = page?.candles.first?.day else { return nil }
+    await prevCloses.storeSessionDay(day, for: market)
+    return day
   }
 
   /// 국내 정규장(15:30) 마감 체결가. `day`는 대상 거래일(`yyyy-MM-dd`, KST).
