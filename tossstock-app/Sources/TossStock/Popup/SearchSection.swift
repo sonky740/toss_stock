@@ -9,15 +9,11 @@ import SwiftUI
 struct SearchSection: View {
   let model: StockModel
   @Binding var query: String
-  @State private var aliases: [String: String] = [:]  // 결과 행별 별칭 입력값(코드 → 별칭)
 
   var body: some View {
     darkField("종목명·코드로 검색 (삼성전자 / AAPL / 0190C0)", text: $query)
       .padding(.horizontal, 15).padding(.top, 2).padding(.bottom, 6)
-      .onChange(of: query) { _, text in
-        model.search(text)
-        aliases.removeAll()  // 결과가 갈리면 남은 입력이 엉뚱한 종목에 붙는다
-      }
+      .onChange(of: query) { _, text in model.search(text) }
 
     switch model.universeState {
     case .idle:
@@ -44,7 +40,7 @@ struct SearchSection: View {
     }
   }
 
-  /// 행 본문은 관심·보유 섹션과 같이 토스증권 종목 페이지를 연다(§3.2). 등록은 우측 별칭 입력 + `+`가 맡는다.
+  /// 행 본문은 관심·보유 섹션과 같이 토스증권 종목 페이지를 연다(§3.2). 등록은 우측 `+`가 맡는다.
   private func resultRow(_ r: SearchRow) -> some View {
     let isUS = Self.isUSMarket(r.market)
     return HStack(spacing: 6) {
@@ -59,29 +55,12 @@ struct SearchSection: View {
       if r.isWatched {
         watchedBadge
       } else {
-        aliasField(r)
-        circleIcon("plus", bg: Palette.addBtn, tint: .white) { add(r) }
+        circleIcon("plus", bg: Palette.addBtn, tint: .white) { model.addWatch(code: r.id, alias: "") }
           .help("관심종목에 추가")
       }
     }
     .padding(.trailing, 15)
     .modifier(RowHover())
-  }
-
-  /// 별칭은 추가 버튼 왼쪽에 상시 노출한다 — 비워 두면 종목명으로 표시된다. Enter 로도 추가된다.
-  private func aliasField(_ r: SearchRow) -> some View {
-    TextField(
-      "별칭",
-      text: Binding(get: { aliases[r.id] ?? "" }, set: { aliases[r.id] = $0 })
-    )
-    .textFieldStyle(.plain)
-    .font(.system(size: 11))
-    .foregroundStyle(Palette.textPrimary)
-    .onSubmit { add(r) }
-    .padding(.horizontal, 6).padding(.vertical, 4)
-    .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 5))
-    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Palette.fieldBorder, lineWidth: 1))
-    .frame(width: 66)
   }
 
   private var watchedBadge: some View {
@@ -108,11 +87,6 @@ struct SearchSection: View {
     }
     .contentShape(Rectangle())
     .padding(.leading, 15).padding(.vertical, 5)
-  }
-
-  private func add(_ r: SearchRow) {
-    model.addWatch(code: r.id, alias: aliases[r.id] ?? "")
-    aliases[r.id] = nil
   }
 
   /// 시세 도착 전에도 판별해야 해서 `currency` 가 아니라 마켓으로 가른다.
