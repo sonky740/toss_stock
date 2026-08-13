@@ -1,15 +1,15 @@
 import Foundation
 
 // ─────────────────────────────────────────────────────────────
-// PrevCloseStore — 관심종목 전일종가 캐시 + candles 호출 페이싱.
+// PrevCloseStore — 관심종목·검색 전일종가 캐시 + candles 호출 페이싱.
 // 전일종가는 세션 안에서 불변이라 종목당 세션당 1회만 조회한다(10초 폴링마다 재조회 금지).
 // 키는 벽시계 날짜가 아니라 시장 세션일이다 — 세션 롤은 자정이 아니라 09:00 KST·00:00 ET다.
-// candles(MARKET_DATA_CHART, 초당 5회) 간격도 여기서 지킨다 — actor 직렬화가 곧 호출 직렬화다.
+// candles(MARKET_DATA_CHART) 간격도 여기서 지킨다. 호출자가 폴링·검색 둘이라 예약과 대기를 가른다.
 // ─────────────────────────────────────────────────────────────
 
 actor PrevCloseStore {
   private var entries: [String: (day: String, value: Double)] = [:]
-  private var lastCallAt: Date?
+  private var nextSlotAt: Date?
 
   private static let minCallInterval: TimeInterval = 0.25
 
@@ -23,13 +23,15 @@ actor PrevCloseStore {
     entries[code] = (day, value)
   }
 
-  /// 앞 candles 호출로부터 최소 간격을 확보한다. 호출 직전에 부른다.
-  func paceCandleCall() async {
-    if let lastCallAt {
-      let wait = Self.minCallInterval - Date().timeIntervalSince(lastCallAt)
-      // 취소되면 그대로 진행 — 페이싱 실패의 유일한 결과는 429이고 요청계층이 재시도한다.
-      if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
-    }
-    lastCallAt = Date()
+  /// 다음 candles 호출 슬롯을 예약하고 그때까지 남은 대기 시간을 돌려준다. 호출자가 그만큼 잔 뒤 호출한다.
+  ///
+  /// **대기를 actor 밖에 두는 것이 이 설계의 전부다.** 여기서 `await Task.sleep` 을 하면 그 중단점에서
+  /// 격리가 풀려 다른 호출자가 같은 상태를 읽고 들어온다 — 실측(2026-08-13, 동시 호출자 2)에서
+  /// 호출 간격 11개 중 5개가 0.000초로 페이싱이 절반으로 무너졌다. 예약은 중단점이 없어야 원자적이다.
+  func reserveCandleSlot() -> TimeInterval {
+    let now = Date()
+    let slot = max(nextSlotAt ?? now, now)
+    nextSlotAt = slot.addingTimeInterval(Self.minCallInterval)
+    return slot.timeIntervalSince(now)
   }
 }

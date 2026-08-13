@@ -108,7 +108,7 @@ struct TossService: Sendable {
   private func prevClose(_ code: String, market: Market, sessionDay: String?) async -> Double? {
     if let sessionDay, let cached = await prevCloses.cached(code, on: sessionDay) { return cached }
 
-    await prevCloses.paceCandleCall()
+    await awaitCandleSlot()
     guard
       let page = try? await api.get(
         "/api/v1/candles?symbol=\(code)&interval=1d&count=2",
@@ -145,7 +145,7 @@ struct TossService: Sendable {
   /// 시장의 현재 세션일. clock 종목의 최신 일봉 날짜를 그대로 쓴다 — 종목 일봉과 같은 stamp
   /// 공간이라 DST·휴장·반휴장을 계산할 필요가 없고, 벽시계 날짜와 달리 롤 시각이 저절로 맞는다.
   private func sessionDay(_ market: Market) async -> String? {
-    await prevCloses.paceCandleCall()
+    await awaitCandleSlot()
     let page = try? await api.get(
       "/api/v1/candles?symbol=\(market.clockSymbol)&interval=1d&count=1",
       as: CandlePageResponse.self)
@@ -158,7 +158,7 @@ struct TossService: Sendable {
   /// 그 날 정규장 봉이 없으면 API가 **직전 거래일의 시간외 봉**을 대신 준다(실측: 비거래일
   /// 2026-07-17 조회 → 07-16T20:00 봉). 그게 바로 이 메서드가 피하려는 값이라 날짜로 걸러낸다.
   private func regularClose(_ code: String, on day: String) async -> RegularClose {
-    await prevCloses.paceCandleCall()
+    await awaitCandleSlot()
     // 15:32 KST = 같은 날 06:32Z. 그 이전 최신 1분봉 = 정규장 마감 체결(대개 15:31 동시호가).
     guard
       let page = try? await api.get(
@@ -173,6 +173,13 @@ struct TossService: Sendable {
     case value(Double)
     case absent
     case failed
+  }
+
+  /// candles 호출 직전 페이싱. 슬롯 예약은 actor 안에서 원자적으로, 대기는 여기 밖에서 한다(`PrevCloseStore`).
+  private func awaitCandleSlot() async {
+    let delay = await prevCloses.reserveCandleSlot()
+    // 취소되면 그대로 진행 — 페이싱 실패의 유일한 결과는 429이고 요청계층이 재시도한다.
+    if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
   }
 
   /// 전일종가 경로를 가르는 단일 술어 — 세션일 조회와 정규장 보정이 갈라지지 않게 한 곳에 둔다.
