@@ -33,6 +33,27 @@ enum PopupAnchor {
     return preferredSide(anchor: frame, visible: screen.visibleFrame, paneWidth: paneWidth)
   }
 
+  /// 패널을 닫는다(Esc). 패널 `close()` 로는 창만 사라지고 SwiftUI 의 MenuBarExtra 표시 상태가 안 풀린다 —
+  /// 실측에서 다음 상태아이템 클릭이 "닫기"로 소비돼 두 번 눌러야 다시 열렸다. 그래서 상태아이템 버튼을
+  /// 대신 눌러 SwiftUI 자신의 토글 경로를 태운다. 버튼을 못 찾을 때만 close() 로 떨어진다.
+  static func dismiss() {
+    if let button = statusItemButton() {
+      button.performClick(nil)
+    } else {
+      panel?.close()
+    }
+  }
+
+  /// 상태아이템 버튼은 SwiftUI 가 소유해 참조를 안 준다. 자기 앱 창에서 찾는다.
+  private static func statusItemButton() -> NSStatusBarButton? {
+    NSApp.windows.lazy.compactMap { $0.contentView.flatMap(statusButton(in:)) }.first
+  }
+
+  private static func statusButton(in view: NSView) -> NSStatusBarButton? {
+    if let button = view as? NSStatusBarButton { return button }
+    return view.subviews.lazy.compactMap(statusButton(in:)).first
+  }
+
   /// 순수 판정. 메뉴바 패널이 합성 클릭에 반응하지 않아 이 계산만은 따로 검사할 수 있어야 한다.
   static func preferredSide(anchor: NSRect, visible: NSRect, paneWidth: CGFloat) -> PopupSide {
     if visible.maxX - anchor.maxX >= paneWidth { return .right }

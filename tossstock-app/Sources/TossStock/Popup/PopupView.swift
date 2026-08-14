@@ -17,6 +17,7 @@ struct PopupView: View {
   @State private var tooltip: (text: String, point: CGPoint)?  // 미국 종목 hover 툴팁(popup 좌표). 최상위 overlay 렌더.
   @State private var manageOpen = false
   @State private var manageSide: PopupSide = .right
+  @State private var escMonitor: Any?  // 팝업이 떠 있는 동안만 사는 Esc 키다운 모니터
 
   var body: some View {
     Group {
@@ -31,7 +32,14 @@ struct PopupView: View {
     .coordinateSpace(.named("popup"))
     .background(PopupPanelGrabber())  // 관리 컬럼을 어느 쪽에 붙일지 정하기 위한 앵커 등록(§3.4)
     .overlay { tooltipOverlay }  // 행이 아닌 최상위에 그려 z-index 최상위 + ScrollView clip 회피
-    .onDisappear { reorder.cancel() }  // 팝업 닫힘 등 onEnded 없이 중단 시 tick 루프 종료
+    // Esc 는 `.onExitCommand` 로 못 받는다 — 그건 포커스가 있는 뷰에만 오고, 관리 컬럼이 접혀 있으면
+    // 팝업 안에 포커스 대상이 없다. 팝업이 떠 있는 동안만 키다운을 직접 보고 그때 뗀다.
+    .onAppear { escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: onKeyDown) }
+    .onDisappear {
+      reorder.cancel()  // 팝업 닫힘 등 onEnded 없이 중단 시 tick 루프 종료
+      escMonitor.map(NSEvent.removeMonitor)
+      escMonitor = nil
+    }
   }
 
   // 미국 종목 hover 시 popup 좌표(포인터) 근처에 뜨는 커스텀 툴팁. x는 팝업 폭(360) 안으로 clamp.
@@ -139,6 +147,22 @@ struct PopupView: View {
     .pointerCursor()
     .modifier(RowHover())
     .help(manageOpen ? "관리 영역 닫기" : "옆에 관리 영역 펼치기")
+  }
+
+  /// Esc 만 가로채고 나머지는 그대로 흘린다(nil = 소비).
+  private func onKeyDown(_ event: NSEvent) -> NSEvent? {
+    guard event.keyCode == 53 else { return event }  // 53 = Esc
+    escape()
+    return nil
+  }
+
+  /// Esc — 넓힌 것부터 되돌린다: 관리 컬럼이 펼쳐져 있으면 접고, 없으면 팝업을 닫는다.
+  private func escape() {
+    if manageOpen {
+      manageOpen = false
+    } else {
+      PopupAnchor.dismiss()
+    }
   }
 
   private func toggleManage() {
