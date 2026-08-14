@@ -17,7 +17,8 @@ struct PopupView: View {
   @State private var tooltip: (text: String, point: CGPoint)?  // 미국 종목 hover 툴팁(popup 좌표). 최상위 overlay 렌더.
   @State private var manageOpen = false
   @State private var manageSide: PopupSide = .right
-  @State private var escMonitor: Any?  // 팝업이 떠 있는 동안만 사는 Esc 키다운 모니터
+  @State private var escMonitor: Any?  // 팝업이 떠 있는 동안만 사는 키다운 모니터(Esc·키보드 이동)
+  @State private var focus: PopupFocus?  // 키보드 포커스 링. nil = 아직 키를 안 썼다(마우스만 쓴 상태)
 
   var body: some View {
     Group {
@@ -32,13 +33,14 @@ struct PopupView: View {
     .coordinateSpace(.named("popup"))
     .background(PopupPanelGrabber())  // 관리 컬럼을 어느 쪽에 붙일지 정하기 위한 앵커 등록(§3.4)
     .overlay { tooltipOverlay }  // 행이 아닌 최상위에 그려 z-index 최상위 + ScrollView clip 회피
-    // Esc 는 `.onExitCommand` 로 못 받는다 — 그건 포커스가 있는 뷰에만 오고, 관리 컬럼이 접혀 있으면
-    // 팝업 안에 포커스 대상이 없다. 팝업이 떠 있는 동안만 키다운을 직접 보고 그때 뗀다.
+    // Esc·방향키는 `.onExitCommand`/`.onKeyPress` 로 못 받는다 — 그건 포커스가 있는 뷰에만 오고,
+    // 이 팝업은 포커스 대상이 없는 채로 떠 있는 게 기본이다. 떠 있는 동안만 키다운을 직접 보고 그때 뗀다.
     .onAppear { escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: onKeyDown) }
     .onDisappear {
       reorder.cancel()  // 팝업 닫힘 등 onEnded 없이 중단 시 tick 루프 종료
       escMonitor.map(NSEvent.removeMonitor)
       escMonitor = nil
+      focus = nil
     }
   }
 
@@ -87,34 +89,42 @@ struct PopupView: View {
     VStack(alignment: .leading, spacing: 0) {
       manageEntry  // ScrollView 밖 — 목록이 길어져도 스크롤에 밀려나지 않는다
       hairline
-      ScrollView {
-        VStack(alignment: .leading, spacing: 0) {
-          holdingsSection
-          sectionDivider
-          watchSection
+      // 프록시는 ScrollView 안이 아니라 바깥에 둔다 — 실측 대상 서브트리(아래)에 컨테이너를 끼우면
+      // 높이 해석이 달라진다(관리 컬럼과 같은 이유).
+      ScrollViewReader { scroll in
+        ScrollView {
+          VStack(alignment: .leading, spacing: 0) {
+            holdingsSection
+            sectionDivider
+            watchSection
+          }
+          .padding(.bottom, 8)
+          // ScrollView는 고유 높이가 0 → self-sizing 윈도우(MenuBarExtra .window)에서 붕괴.
+          // 콘텐츠 실측 높이로 ScrollView 높이를 고정(최대 520, 초과 시 스크롤).
+          .background(
+            GeometryReader { proxy in
+              Color.clear.onChange(of: proxy.size.height, initial: true) { _, h in
+                contentHeight = h
+              }
+            }
+          )
+          // 콘텐츠 서브트리에 심어 뒤의 NSScrollView 참조를 잡는다(드래그 edge 자동 스크롤용).
+          .background(ScrollViewGrabber { reorder.attach($0) })
         }
-        .padding(.bottom, 8)
-        // ScrollView는 고유 높이가 0 → self-sizing 윈도우(MenuBarExtra .window)에서 붕괴.
-        // 콘텐츠 실측 높이로 ScrollView 높이를 고정(최대 520, 초과 시 스크롤).
+        .frame(height: scrollHeight)
+        // 뷰포트(스크롤 안 되는 바깥 프레임)의 글로벌 위치 → 드래그 중 edge 밴드 판정 기준.
         .background(
           GeometryReader { proxy in
-            Color.clear.onChange(of: proxy.size.height, initial: true) { _, h in
-              contentHeight = h
+            Color.clear.onChange(of: proxy.frame(in: .global), initial: true) { _, f in
+              reorder.setViewport(f)
             }
           }
         )
-        // 콘텐츠 서브트리에 심어 뒤의 NSScrollView 참조를 잡는다(드래그 edge 자동 스크롤용).
-        .background(ScrollViewGrabber { reorder.attach($0) })
-      }
-      .frame(height: scrollHeight)
-      // 뷰포트(스크롤 안 되는 바깥 프레임)의 글로벌 위치 → 드래그 중 edge 밴드 판정 기준.
-      .background(
-        GeometryReader { proxy in
-          Color.clear.onChange(of: proxy.frame(in: .global), initial: true) { _, f in
-            reorder.setViewport(f)
-          }
+        // 키보드로 옮긴 행이 뷰 밖이면 끌어온다. 진입 행·하단 버튼은 ScrollView 밖이라 대상이 아니다.
+        .onChange(of: focus) { _, target in
+          if let target, target.isRow { scroll.scrollTo(target) }
         }
-      )
+      }
       // scrollDisabled 없음: 자동 스크롤 델타(S)를 translation 에 실시간 합산해 정합하므로 desync 가드 불필요.
       hairline  // 하단 풀폭 구분선
       footer
@@ -146,14 +156,70 @@ struct PopupView: View {
     .buttonStyle(.plain)
     .pointerCursor()
     .modifier(RowHover())
+    .modifier(FocusRing(active: focus == .manageEntry, inset: 4))
     .help(manageOpen ? "관리 영역 닫기" : "옆에 관리 영역 펼치기")
   }
 
-  /// Esc 만 가로채고 나머지는 그대로 흘린다(nil = 소비).
+  // ── 키보드 조작 (§3.8) ──
+
+  /// 소비할 키만 nil 을 돌려주고 나머지는 그대로 흘린다.
   private func onKeyDown(_ event: NSEvent) -> NSEvent? {
-    guard event.keyCode == 53 else { return event }  // 53 = Esc
-    escape()
+    if event.keyCode == 53 {  // Esc
+      escape()
+      return nil
+    }
+    // 입력 중엔 아무것도 뺏지 않는다 — 검색 필드가 ↑/↓/Enter 를 자기 결과 목록에 쓰고(§3.4),
+    // 한글은 조합 중에도 키다운이 온다.
+    guard !model.needsCredentials, !isEditingText else { return event }
+    switch event.keyCode {
+    case 125: moveFocus(1)  // ↓
+    case 126: moveFocus(-1)  // ↑
+    case 48: moveFocus(event.modifierFlags.contains(.shift) ? -1 : 1)  // Tab
+    case 36, 76:  // Return · 키패드 Enter
+      guard focus != nil else { return event }
+      activateFocused()
+    default: return event
+    }
     return nil
+  }
+
+  /// 텍스트 필드가 first responder 인지. 편집 중엔 필드 에디터(`NSTextView`)가 잡지만
+  /// 구현이 바뀌어도 어긋나지 않게 `NSTextField` 도 함께 본다 — 놓치면 검색 키 조작을 통째로 뺏는다.
+  private var isEditingText: Bool {
+    let responder = NSApp.keyWindow?.firstResponder
+    return responder is NSTextView || responder is NSTextField
+  }
+
+  /// 위→아래 순서와 각 항목의 실행을 한 곳에서 만든다. 목록은 10초 폴링으로 갈리므로 매번 현재 상태에서
+  /// 만들고, 인덱스가 아니라 종목코드로 가리킨다 — 사이 행이 사라져도 링이 엉뚱한 종목으로 밀리지 않는다.
+  private var focusItems: [FocusItem] {
+    var items = [FocusItem(target: .manageEntry, run: toggleManage)]
+    if case .loaded(let rows) = model.holdings {
+      items += rows.map { r in FocusItem(target: .holding(r.id)) { openStock(code: r.id, isUS: isUS(r)) } }
+    }
+    if case .loaded(let rows) = model.watch {
+      items += rows.map { r in FocusItem(target: .watch(r.id)) { openStock(code: r.id, isUS: isUS(r)) } }
+    }
+    return items + [
+      FocusItem(target: .refresh, run: model.refreshNow),
+      FocusItem(target: .auth, run: model.checkAuth),
+      FocusItem(target: .quit) { NSApp.terminate(nil) },
+    ]
+  }
+
+  /// 링을 한 칸 옮긴다(위아래로 순환). 링이 없으면 방향과 무관하게 첫 항목이다 —
+  /// ↑ 를 마지막(`종료`)으로 보내면 갓 연 팝업에서 두 키에 앱이 꺼진다.
+  private func moveFocus(_ delta: Int) {
+    let items = focusItems
+    guard let current = focus, let i = items.firstIndex(where: { $0.target == current }) else {
+      focus = items.first?.target
+      return
+    }
+    focus = items[(i + delta + items.count) % items.count].target
+  }
+
+  private func activateFocused() {
+    focusItems.first { $0.target == focus }?.run()
   }
 
   /// Esc — 넓힌 것부터 되돌린다: 관리 컬럼이 펼쳐져 있으면 접고, 없으면 팝업을 닫는다.
@@ -171,6 +237,7 @@ struct PopupView: View {
       manageSide = PopupAnchor.side(paneWidth: ManagePane.width)
       // 유니버스 콜드 수집이 8초라 관리를 안 여는 세션에서는 시작조차 하지 않는다.
       model.prepareSearch()
+      focus = nil  // 검색 필드가 포커스를 가져간다 — 링이 남으면 "지금 여기"가 둘이 된다
     }
     manageOpen.toggle()
   }
@@ -188,12 +255,16 @@ struct PopupView: View {
         placeholder("보유종목 없음")
       } else {
         ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
-          positionRow(r).modifier(
-            Reorderable(
-              section: .holding, index: i, count: rows.count, controller: reorder,
-              commit: { from, to in
-                withAnimation(.snappy(duration: 0.22)) { model.moveHolding(from: from, to: to) }
-              }))
+          positionRow(r)
+            .modifier(FocusRing(active: focus == .holding(r.id), inset: 4))
+            .modifier(
+              Reorderable(
+                section: .holding, index: i, count: rows.count, controller: reorder,
+                commit: { from, to in
+                  withAnimation(.snappy(duration: 0.22)) { model.moveHolding(from: from, to: to) }
+                })
+            )
+            .id(PopupFocus.holding(r.id))  // 보유·관심에 같은 코드가 있어도 스크롤 앵커가 안 겹치게
         }
       }
     }
@@ -206,8 +277,8 @@ struct PopupView: View {
       pctText: Format.pctSigned(r.ratePercent, r.direction),
       pnlText: Format.pnl(r.pnlAmount, r.currency),
       direction: r.direction,
-      onTap: { openStock(code: r.id, isUS: r.currency.isUSD) },
-      help: r.currency.isUSD ? usStockHelp : nil)
+      onTap: { openStock(code: r.id, isUS: isUS(r)) },
+      help: isUS(r) ? usStockHelp : nil)
   }
 
   // ── 관심종목 ──
@@ -223,12 +294,16 @@ struct PopupView: View {
         placeholder("관심종목 없음")
       } else {
         ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
-          watchRow(r).modifier(
-            Reorderable(
-              section: .watch, index: i, count: rows.count, controller: reorder,
-              commit: { from, to in
-                withAnimation(.snappy(duration: 0.22)) { model.moveWatch(from: from, to: to) }
-              }))
+          watchRow(r)
+            .modifier(FocusRing(active: focus == .watch(r.id), inset: 4))
+            .modifier(
+              Reorderable(
+                section: .watch, index: i, count: rows.count, controller: reorder,
+                commit: { from, to in
+                  withAnimation(.snappy(duration: 0.22)) { model.moveWatch(from: from, to: to) }
+                })
+            )
+            .id(PopupFocus.watch(r.id))
         }
       }
     }
@@ -243,18 +318,18 @@ struct PopupView: View {
         pctText: "\(Format.arrow(dir))\(Format.pctAbs(rate))",
         pnlText: "\(Format.arrow(dir))\(Format.changeAbs(chg, r.currency))",
         direction: dir,
-        onTap: { openStock(code: r.id, isUS: r.currency.isUSD) },
-        help: r.currency.isUSD ? usStockHelp : nil)
+        onTap: { openStock(code: r.id, isUS: isUS(r)) },
+        help: isUS(r) ? usStockHelp : nil)
     case .noPrevClose:
       noteRow(
         name: r.rowName, price: Format.price(r.lastPrice, r.currency), note: "등락 데이터 없음",
-        onTap: { openStock(code: r.id, isUS: r.currency.isUSD) },
-        help: r.currency.isUSD ? usStockHelp : nil)
+        onTap: { openStock(code: r.id, isUS: isUS(r)) },
+        help: isUS(r) ? usStockHelp : nil)
     case .lookupFailed:
       noteRow(
         name: r.rowName, price: nil, note: "조회실패 (코드/인증 확인)",
-        onTap: { openStock(code: r.id, isUS: isUSCode(r.id)) },
-        help: isUSCode(r.id) ? usStockHelp : nil)
+        onTap: { openStock(code: r.id, isUS: isUS(r)) },
+        help: isUS(r) ? usStockHelp : nil)
     }
   }
 
@@ -326,7 +401,9 @@ struct PopupView: View {
       authResultLine
       HStack(spacing: 8) {
         footerButton(icon: "arrow.clockwise", title: "새로고침") { model.refreshNow() }
+          .modifier(FocusRing(active: focus == .refresh, inset: 0))
         footerButton(title: "인증 점검") { model.checkAuth() }
+          .modifier(FocusRing(active: focus == .auth, inset: 0))
         Spacer()
         if let updated = model.lastUpdated {
           Text(updated.formatted(date: .omitted, time: .standard))
@@ -334,6 +411,7 @@ struct PopupView: View {
             .foregroundStyle(Palette.time)
         }
         footerButton(title: "종료", tint: Palette.quit, hasBG: false) { NSApp.terminate(nil) }
+          .modifier(FocusRing(active: focus == .quit, inset: 0))
       }
     }
     .padding(.horizontal, 13).padding(.vertical, 9)
@@ -449,8 +527,15 @@ struct PopupView: View {
     Rectangle().fill(Palette.divider).frame(width: 1)
   }
 
-  // 조회실패 행 폴백: 종목명·통화 조회가 안 돼 currency가 강제 KRW로 채워진 경우 code 형태로 KR/US를 판별한다.
-  private func isUSCode(_ code: String) -> Bool { !(code.first?.isNumber ?? true) }
+  private func isUS(_ r: PositionRow) -> Bool { r.currency.isUSD }
+
+  private func isUS(_ r: WatchRow) -> Bool {
+    switch r.change {
+    // 조회실패 행 폴백: 종목명·통화 조회가 안 돼 currency 가 강제 KRW 로 채워진다 → code 형태로 판별.
+    case .lookupFailed: !(r.id.first?.isNumber ?? true)
+    default: r.currency.isUSD
+    }
+  }
 
   // ── helpers ──
   private func mask(_ no: String) -> String {
@@ -488,6 +573,47 @@ private struct RowInteraction: ViewModifier {
           report(nil, .zero)
         }
       }
+  }
+}
+
+// ── 키보드 조작 (§3.8) ──
+
+/// 링이 머무는 지점. 종목은 인덱스가 아니라 코드로 가리키고, 보유·관심은 같은 코드라도 다른 지점이다.
+enum PopupFocus: Hashable {
+  case manageEntry
+  case holding(String)
+  case watch(String)
+  case refresh, auth, quit
+
+  /// ScrollView 안에 있는가 — 진입 행·하단 버튼은 스크롤로 끌어올 대상이 아니다.
+  var isRow: Bool {
+    switch self {
+    case .holding, .watch: true
+    default: false
+    }
+  }
+}
+
+@MainActor
+private struct FocusItem {
+  let target: PopupFocus
+  let run: () -> Void
+}
+
+/// 포커스 표시는 배경 틴트가 아니라 링(stroke)이다 — 틴트는 드래그 드롭 타깃(`Palette.dropHi`)과
+/// 같은 자리·같은 색이라 재배치 중 둘을 구분할 수 없다.
+private struct FocusRing: ViewModifier {
+  let active: Bool
+  let inset: CGFloat  // 행은 좌우 여백 안쪽에, 하단 버튼은 테두리에 딱 맞춘다
+
+  func body(content: Content) -> some View {
+    content.overlay {
+      RoundedRectangle(cornerRadius: 6)
+        .stroke(Palette.indigo, lineWidth: 1)
+        .padding(inset)
+        .opacity(active ? 1 : 0)
+        .allowsHitTesting(false)
+    }
   }
 }
 
