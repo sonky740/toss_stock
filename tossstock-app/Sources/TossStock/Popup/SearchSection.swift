@@ -9,12 +9,20 @@ import SwiftUI
 struct SearchSection: View {
   let model: StockModel
   @Binding var query: String
+  let scroll: ScrollViewProxy  // 키보드로 고른 행이 화면 밖에 있으면 끌어온다
   @FocusState private var searchFocused: Bool
+  @State private var selected: Int?  // 키보드로 고른 결과 행. nil = 선택 없음
 
   var body: some View {
     darkField("종목명·코드로 검색 (삼성전자 / AAPL / 0190C0)", text: $query, focus: $searchFocused)
       .padding(.horizontal, 15).padding(.top, 2).padding(.bottom, 6)
-      .onChange(of: query) { _, text in model.search(text) }
+      .onChange(of: query) { _, text in
+        selected = nil  // 결과가 통째로 갈린다
+        model.search(text)
+      }
+      .onKeyPress(.downArrow) { move(1) }
+      .onKeyPress(.upArrow) { move(-1) }
+      .onSubmit { registerSelected() }
       // 관리 컬럼을 펼친 의도는 대개 검색이다. 즉시 세우면 안 붙는다 —
       // 컬럼이 뷰 트리에 드는 순간 패널이 360→681로 리사이즈되며 first responder 가 리셋된다.
       .onAppear {
@@ -45,12 +53,33 @@ struct SearchSection: View {
         placeholder("검색 결과 없음")
       }
     } else {
-      ForEach(model.searchResults) { resultRow($0) }
+      ForEach(Array(model.searchResults.enumerated()), id: \.element.id) { i, r in
+        resultRow(r, isSelected: i == selected)
+      }
     }
   }
 
+  /// ↑/↓ 는 결과가 있을 때만 가로챈다 — 없으면 캐럿 이동(필드 기본 동작)을 그대로 둔다.
+  /// 맨 위에서 ↑ 하면 선택이 풀려 입력만 남는다.
+  private func move(_ delta: Int) -> KeyPress.Result {
+    let count = model.searchResults.count
+    guard count > 0 else { return .ignored }
+    let next = (selected ?? -1) + delta
+    selected = next < 0 ? nil : min(next, count - 1)
+    if let selected { scroll.scrollTo(model.searchResults[selected].id) }
+    return .handled
+  }
+
+  /// Enter = 선택 행 등록. 선택이 없으면 아무것도 하지 않는다 — 타이핑 끝의 Enter 로 엉뚱한 종목이 등록되면 안 된다.
+  private func registerSelected() {
+    guard let i = selected, i < model.searchResults.count else { return }
+    let row = model.searchResults[i]
+    guard !row.isWatched else { return }
+    model.addWatch(code: row.id, alias: "")
+  }
+
   /// 행 본문은 관심·보유 섹션과 같이 토스증권 종목 페이지를 연다(§3.2). 등록은 우측 `+`가 맡는다.
-  private func resultRow(_ r: SearchRow) -> some View {
+  private func resultRow(_ r: SearchRow, isSelected: Bool) -> some View {
     let isUS = Self.isUSMarket(r.market)
     return HStack(spacing: 6) {
       Button {
@@ -69,6 +98,7 @@ struct SearchSection: View {
       }
     }
     .padding(.trailing, 15)
+    .background(isSelected ? Palette.dropHi : Color.clear)  // 드롭 타깃과 같은 "여기" 표시
     .modifier(RowHover())
   }
 

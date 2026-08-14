@@ -69,17 +69,21 @@ struct ManagePane: View {
     VStack(alignment: .leading, spacing: 0) {
       paneHeader
       hairlineH
-      ScrollView {
-        VStack(alignment: .leading, spacing: 0) {
-          SearchSection(model: model, query: $query)
-          registeredHeader
-          ForEach(model.watchSymbols) { manageRow($0) }
+      // 검색 결과를 ↑/↓ 로 훑을 때 선택 행을 끌어오려면 프록시가 필요하다. ScrollView 안이 아니라
+      // 바깥에 둔다 — 실측 대상 서브트리(§4.2)에 컨테이너를 끼우면 높이 해석이 달라진다.
+      ScrollViewReader { scroll in
+        ScrollView {
+          VStack(alignment: .leading, spacing: 0) {
+            SearchSection(model: model, query: $query, scroll: scroll)
+            registeredHeader
+            ForEach(model.watchSymbols) { manageRow($0) }
+          }
+          .padding(.bottom, 8)
         }
-        .padding(.bottom, 8)
+        // 남는 높이를 먹어 본체 컬럼과 아래를 맞춘다. minHeight 는 붕괴 방지용 — ScrollView 고유 높이가
+        // 0이라(§4.2) maxHeight 만 주면 HStack 높이 계산에 따라 납작해질 수 있다.
+        .frame(minHeight: height, maxHeight: .infinity)
       }
-      // 남는 높이를 먹어 본체 컬럼과 아래를 맞춘다. minHeight 는 붕괴 방지용 — ScrollView 고유 높이가
-      // 0이라(§4.2) maxHeight 만 주면 HStack 높이 계산에 따라 납작해질 수 있다.
-      .frame(minHeight: height, maxHeight: .infinity)
     }
     .frame(width: Self.width, alignment: .top)
   }
