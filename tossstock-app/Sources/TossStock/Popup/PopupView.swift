@@ -485,9 +485,10 @@ func openStock(code: String, isUS: Bool) {
   NSWorkspace.shared.open(url)
 }
 
-func darkField(_ prompt: String, text: Binding<String>) -> some View {
+func darkField(_ prompt: String, text: Binding<String>, focus: FocusState<Bool>.Binding) -> some View {
   TextField(prompt, text: text)
     .textFieldStyle(.plain)
+    .focused(focus)
     .font(.system(size: 12))
     .foregroundStyle(Palette.textPrimary)
     .padding(.horizontal, 9).padding(.vertical, 7)

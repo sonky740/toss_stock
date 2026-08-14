@@ -9,11 +9,20 @@ import SwiftUI
 struct SearchSection: View {
   let model: StockModel
   @Binding var query: String
+  @FocusState private var searchFocused: Bool
 
   var body: some View {
-    darkField("종목명·코드로 검색 (삼성전자 / AAPL / 0190C0)", text: $query)
+    darkField("종목명·코드로 검색 (삼성전자 / AAPL / 0190C0)", text: $query, focus: $searchFocused)
       .padding(.horizontal, 15).padding(.top, 2).padding(.bottom, 6)
       .onChange(of: query) { _, text in model.search(text) }
+      // 관리 컬럼을 펼친 의도는 대개 검색이다. 즉시 세우면 안 붙는다 —
+      // 컬럼이 뷰 트리에 드는 순간 패널이 360→681로 리사이즈되며 first responder 가 리셋된다.
+      .onAppear {
+        Task { @MainActor in
+          try? await Task.sleep(for: .milliseconds(50))
+          searchFocused = true
+        }
+      }
 
     switch model.universeState {
     case .idle:
