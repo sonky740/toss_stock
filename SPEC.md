@@ -28,6 +28,7 @@
   - 따라서 `access_token`·만료시각·`accountSeq`를 `token.json`에 캐시하고 만료 전까지 재사용한다. 만료 **5분 전**을 캐시 만료로 두어 선제 재발급한다.
   - 요청이 **401**(만료/무효)이면 1회 강제 재발급 후 재시도한다.
 - 계좌 헤더: 계좌·자산 API는 `Authorization: Bearer {token}` 외에 `X-Tossinvest-Account: {accountSeq}`가 필요하다. `accountSeq`는 `GET /api/v1/accounts` 응답의 `result[0].accountSeq`이며 토큰과 함께 캐시한다.
+- **IP 허용 목록**: 허용 목록 밖 공인 IP에서 온 요청은 토큰이 유효해도 `403` `{"error":{"code":"ip-not-allowed"}}`로 거부된다(실측 2026-10-16, `/api/v1/*` 전부). 토큰 검증이 먼저라 무효 토큰은 `invalid-token`이 나오므로, 이 코드가 보이면 토큰 자체는 유효하다. 401이 아니라 재발급 경로로는 복구되지 않고 앱이 할 수 있는 조치도 없다 — 토스증권 WTS → 설정 → Open API에서 현재 공인 IP를 추가해야 한다. 앱은 이 403을 다른 HTTP 오류와 구분하지 않아 인증 점검에 "인증 실패 — auth.env 의 client_id/secret 확인"이 뜬다.
 
 ### 2.2 API 엔드포인트
 
